@@ -3,18 +3,22 @@
 
 #include <Arduino.h>
 
-// Measurement result
+// Raw ADC RMS measurement result for both analog front-end lines.
+// No current/power conversion yet — that requires the calibration equation
+// this program's serial output is used to derive.
 struct CurrentMeasurement {
-    float rms_voltage_mv;
-    float current_amps;
-    float power_watts;
+    float adc_rms_raw_unamplified;     // counts, 0-4095
+    float adc_rms_voltage_unamplified; // volts
+    float adc_rms_raw_amplified;       // counts, 0-4095
+    float adc_rms_voltage_amplified;   // volts
     float sample_rate_hz;
 };
 
-// Initialize the current sensor
+// Initialize both ADC lines
 void initCurrentSensor();
 
-// Take measurement (averages multiple RMS calculations)
+// Take a measurement window (averages num_readings independent RMS
+// calculations, sampling both lines together each pass)
 CurrentMeasurement measureCurrent(int num_readings);
 
 #endif

@@ -3,12 +3,22 @@
 #include "rms_current.h"
 #include <WiFi.h>
 #include "mqtt_handler.h"
-#include "simple_webserver.h"
+
+// Serial-only ADC calibration build: prints raw ADC RMS for both analog
+// front-end lines so current can be measured by hand against known loads
+// and the ADC-rms -> amps equation derived. WiFi/MQTT connection code is
+// kept but commented out below for now - not needed for serial calibration.
 
 WiFiClient espClient;
 
-unsigned long lastCurrentPublish = 0;
+unsigned long lastMeasurement = 0;
 unsigned long lastMQTTReconnect = 0;
+
+#define AVERAGING_WINDOW_SECONDS 10
+float history_unamp_sq[AVERAGING_WINDOW_SECONDS] = {0};
+float history_amp_sq[AVERAGING_WINDOW_SECONDS] = {0};
+int history_index = 0;
+int history_count = 0;
 
 void setup() {
     Serial.begin(115200);
@@ -17,79 +27,78 @@ void setup() {
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW); //LED off at first
 
-    Serial.println("\n=== ESP32 HVAC Outdoor Monitor ===\n");
+    Serial.println("\n=== ESP32 HVAC Outdoor Monitor - ADC RMS Calibration ===\n");
 
-    //Connect to wifi
-    Serial.println("connecting to wifi");
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
-
-    Serial.println("\nWiFi connected!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("MAC address: ");
-    Serial.println(WiFi.macAddress());
-
-    //MQTT
-    initMQTT(espClient);
-    reconnectMQTT();
-
-    //web server
-    initWebServer();
-    startWebServer();
+    // WiFi/MQTT disabled for serial-only calibration - re-enable when ready
+    // to publish current readings again.
+    // Serial.println("connecting to wifi");
+    // WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    //
+    // while (WiFi.status() != WL_CONNECTED) {
+    //     delay(500);
+    //     Serial.print(".");
+    // }
+    //
+    // Serial.println("\nWiFi connected!");
+    // Serial.print("IP address: ");
+    // Serial.println(WiFi.localIP());
+    // Serial.print("MAC address: ");
+    // Serial.println(WiFi.macAddress());
+    //
+    // initMQTT(espClient);
+    // reconnectMQTT();
 
     initCurrentSensor();
 }
 
-
 void loop() {
 
-    handleWebClient();
+    // Maintain MQTT connection (disabled - see setup())
+    // if (!isMQTTConnected()) {
+    //     if (millis() - lastMQTTReconnect > MQTT_RECONNECT_INTERVAL) {
+    //         lastMQTTReconnect = millis();
+    //         reconnectMQTT();
+    //     }
+    // } else {
+    //     getMQTTClient().loop();
+    // }
 
-    // Maintain MQTT connection
-    if (!isMQTTConnected()) {
-        if (millis() - lastMQTTReconnect > MQTT_RECONNECT_INTERVAL) {
-            lastMQTTReconnect = millis();
-            reconnectMQTT();
+    // Measure and print every second
+    if (millis() - lastMeasurement >= 1000) {
+        lastMeasurement = millis();
+
+        CurrentMeasurement result = measureCurrent(CURRENT_READINGS_PER_MEASUREMENT);
+
+        // Roll the last 10 one-second readings into a true 10s RMS: average
+        // their mean-squares (not the RMS values themselves), then sqrt.
+        history_unamp_sq[history_index] =
+            result.adc_rms_raw_unamplified * result.adc_rms_raw_unamplified;
+        history_amp_sq[history_index] =
+            result.adc_rms_raw_amplified * result.adc_rms_raw_amplified;
+        history_index = (history_index + 1) % AVERAGING_WINDOW_SECONDS;
+        if (history_count < AVERAGING_WINDOW_SECONDS) history_count++;
+
+        float sum_unamp_sq = 0;
+        float sum_amp_sq = 0;
+        for (int i = 0; i < history_count; i++) {
+            sum_unamp_sq += history_unamp_sq[i];
+            sum_amp_sq += history_amp_sq[i];
         }
-    } else {
-        getMQTTClient().loop();
-    }
+        float avg10_unamp_raw = sqrt(sum_unamp_sq / history_count);
+        float avg10_amp_raw = sqrt(sum_amp_sq / history_count);
+        float avg10_unamp_v = (avg10_unamp_raw / 4095.0) * 3.3;
+        float avg10_amp_v = (avg10_amp_raw / 4095.0) * 3.3;
 
-
-    
-    // Publish current every 10 seconds
-    if (millis() - lastCurrentPublish > PUBLISH_INTERVAL_MS) {
-        lastCurrentPublish = millis();
-        
-        //getMQTTClient().loop();
-
-        getMQTTClient().loop();  // Before
-        CurrentMeasurement result = 
-            measureCurrent(CURRENT_READINGS_PER_MEASUREMENT);
-        getMQTTClient().loop();  // Before
-
-        //getMQTTClient().loop();
-        
-        char string[50];
-        sprintf(string, "Measured Current: %.2f\n", result.current_amps);
-        Serial.print(string);
-        sprintf(string, "Measured Power: %.2f\n", result.power_watts);
-        Serial.print(string);
-        sprintf(string, "Sample Rate: %.1f\n", result.sample_rate_hz);
-        Serial.print(string);
-        sprintf(string, "Measured adc_voltage: %.2f\n", result.rms_voltage_mv);
-        Serial.print(string);        
-        
-        // Publish to MQTT
-        publishPower(result.power_watts);
-
-        
-        // Update web display cache
-        // updateDisplayPower(result.power_watts);
+        char line[100];
+        Serial.println("---");
+        sprintf(line, "1s  | Unamp ADC RMS: %6.1f (%.3fV)  |  Amp ADC RMS: %6.1f (%.3fV)",
+                result.adc_rms_raw_unamplified, result.adc_rms_voltage_unamplified,
+                result.adc_rms_raw_amplified, result.adc_rms_voltage_amplified);
+        Serial.println(line);
+        sprintf(line, "10s | Unamp ADC RMS: %6.1f (%.3fV)  |  Amp ADC RMS: %6.1f (%.3fV)",
+                avg10_unamp_raw, avg10_unamp_v, avg10_amp_raw, avg10_amp_v);
+        Serial.println(line);
+        sprintf(line, "Sample rate: %.0f Hz", result.sample_rate_hz);
+        Serial.println(line);
     }
 }
