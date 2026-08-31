@@ -13,6 +13,8 @@ WiFiClient espClient;
 
 unsigned long lastMeasurement = 0;
 unsigned long lastMQTTReconnect = 0;
+unsigned long lastHeartbeat = 0;
+bool heartbeatState = false;
 
 #define AVERAGING_WINDOW_SECONDS 10
 float history_unamp_sq[AVERAGING_WINDOW_SECONDS] = {0};
@@ -52,6 +54,16 @@ void setup() {
 }
 
 void loop() {
+
+    // Heartbeat blink, independent of the measurement cadence below -
+    // if this stops toggling, the firmware is actually hung. If it keeps
+    // blinking while the serial monitor goes quiet, the serial/USB link
+    // dropped instead.
+    if (millis() - lastHeartbeat >= 100) {
+        lastHeartbeat = millis();
+        heartbeatState = !heartbeatState;
+        digitalWrite(LED_PIN, heartbeatState);
+    }
 
     // Maintain MQTT connection (disabled - see setup())
     // if (!isMQTTConnected()) {
