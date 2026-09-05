@@ -1,0 +1,8 @@
+AC fan RMS values: 
+
+
+AC voltage AC off: 
+
+
+AC voltage AC on :
+current at that voltage: 
