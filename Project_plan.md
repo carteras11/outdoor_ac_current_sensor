@@ -2,7 +2,13 @@
 
 ## Current State (2026-09-13)
 
-- WiFi + MQTT connectivity: working (`main.cpp`, `mqtt_handler.cpp/h`).
+- WiFi + MQTT connectivity: working, on-device confirmed (`main.cpp`,
+  `mqtt_handler.cpp/h`). The WiFi connect step now forces station mode and
+  drops stale state before connecting, and reports a decoded
+  `WiFi.status()` + retries if not connected within 15s, instead of hanging
+  silently — see
+  [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
+  ("WiFi connect issue investigated, resolved").
 - Temperature sensing (DS18B20) and the on-device web server: removed for now
   to focus on getting current sensing right. Code is recoverable from git
   history (`temperature.cpp/h`, `simple_webserver.cpp/h`) if revisited later.
@@ -41,20 +47,21 @@
   [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
   ("Voltage sag / power estimate").
 - Firmware (`src/rms_current.cpp/h`, `src/calibration.cpp/h`,
-  `src/power.cpp/h`, `src/main.cpp`): serial-only build. Samples both ADC
-  lines, converts to calibrated amps via `calculateAmps()`, derives
-  voltage/power from the smoothed 10-second amps, and prints the raw
-  unamp/amp ADC RMS plus amps/voltage/power over serial (both the 1s and
-  10s windows). WiFi/MQTT connection code is present (commented out) and
-  `publishPower()` is ready to call, but publishing isn't wired up yet —
-  being set up separately later. The heartbeat LED blink has been removed;
-  `LED_PIN` is now only driven by the MQTT `hvac/led` command.
+  `src/power.cpp/h`, `src/main.cpp`): connects to WiFi/MQTT, samples both
+  ADC lines, converts to calibrated amps via `calculateAmps()`, derives
+  voltage/power from the smoothed 5-second amps, and prints the raw
+  unamp/amp ADC RMS plus amps/voltage/power over serial every second (both
+  the 1s and 5s windows) for live debugging. Separately, publishes power to
+  `MQTT_TOPIC_POWER` every 5 seconds, on its own timer independent of the
+  1s serial print. The heartbeat LED blink has been removed; `LED_PIN` is
+  now only driven by the MQTT `hvac/led` command.
 
 ## Immediate Next Steps
 
-1. **Wire MQTT publishing back up**: uncomment the WiFi/MQTT code in
-   `main.cpp` (`setup()` and `loop()`) and call `publishPower(power_10s)`.
-   Pending final go-ahead once the current changes are reviewed/committed.
+1. **Verify MQTT publishing end-to-end**: confirm `MQTT_TOPIC_POWER`
+   payloads arrive as expected and look correct (e.g. via `mosquitto_sub`
+   or Home Assistant) — WiFi connects and the device is running, but the
+   actual published values haven't been checked against a subscriber yet.
 2. **Collect more voltage-sag data points** to firm up
    `VOLTAGE_SAG_PER_AMP` beyond the current single-point fit.
 3. **Verify against varied load types** (linear resistive, switch-mode, LED
@@ -80,8 +87,9 @@
   voltage sense, combined with the already-integrated CT signal (see handoff
   doc's "Next steps"). The LM741 freed up by moving the integrator to the
   TL272 is available for this.
-- Home Assistant dashboard/integration for the current + power MQTT topics
-  (entities card, history graph, gauge card) once publishing is live again.
+- Home Assistant dashboard/integration for the power MQTT topic (entities
+  card, history graph, gauge card) — publishing is live now, this is just
+  the dashboard/UI side.
 - Long-term data logging / statistics once the system has run for a while.
 
 ## Reference

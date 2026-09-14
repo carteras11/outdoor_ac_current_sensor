@@ -1,30 +1,43 @@
 # Firmware State — ADC RMS Calibration Build
 
-Snapshot of the firmware as of this commit: a serial-only build for the
-two-line analog front-end described in
+Snapshot of the firmware as of this commit, for the two-line analog
+front-end described in
 [ac_current_monitor_handoff_v2.md](ac_current_monitor_handoff_v2.md). It
 converts both lines' ADC RMS into a calibrated amps value on-device
-(`src/calibration.cpp`) and derives an estimated voltage and power from that
-(`src/power.cpp`), printing all three over serial. MQTT publishing exists
-(`publishPower()` in `src/mqtt_handler.cpp`) but is not wired up yet — that's
-being set up separately later.
+(`src/calibration.cpp`), derives an estimated voltage and power from that
+(`src/power.cpp`), prints all of it over serial every second for live
+debugging, and separately publishes power over MQTT every 5 seconds.
 
 ## What this build does
 
+- Connects to WiFi and the MQTT broker (`src/mqtt_handler.cpp/h`,
+  credentials in `src/config.h`). The WiFi connect step (`setup()` in
+  `main.cpp`) explicitly forces station mode and drops stale state
+  (`WiFi.mode(WIFI_STA)`, `WiFi.disconnect(true)`) before calling
+  `WiFi.begin()` — the ESP32 can otherwise carry over AP/STA state from a
+  previous run in a way that blocks a clean connect. If it hasn't connected
+  after 15 seconds, it prints the `WiFi.status()` code (with a plain-English
+  reason for the common ones: SSID not found, likely wrong password, etc.)
+  and retries, rather than spinning dots forever with no diagnostic.
 - Samples both analog front-end lines (unamplified + amplified) via two ADC1
   pins on the ESP32.
 - Computes RMS of each line in software.
 - Converts each line's RMS into amps and blends the two per
   `calculateAmps()` (see "Calibration / amps conversion" below).
-- Derives voltage and power from the smoothed 10-second amps via
+- Derives voltage and power from the smoothed 5-second amps via
   `calculateVoltage()` / `calculatePower()` (see "Voltage sag / power
   estimate" below).
-- Prints, once per second, over Serial (115200 baud):
+- Prints, once per second, over Serial (115200 baud) — this cadence is
+  independent of the MQTT publish interval below, kept fast for live
+  debugging with a computer plugged in:
   - The raw unamplified and amplified ADC RMS (counts) and the calculated
     amps, from the 1-second window.
   - The raw unamplified and amplified ADC RMS (counts), calculated amps,
-    estimated voltage, and power, from a rolling 10-second window.
+    estimated voltage, and power, from a rolling 5-second window.
   - The achieved sample rate.
+- Publishes power (from the same 5-second window) to `MQTT_TOPIC_POWER`
+  every 5 seconds — a separate timer from the 1-second serial print, so
+  MQTT isn't spammed at 1Hz.
 
 ## Hardware / pin mapping
 
@@ -44,9 +57,6 @@ being set up separately later.
   input. Current divider: two 1k resistors in parallel (500 ohm) on top, one
   1k on bottom, giving a ratio of 1000/(1000+500) = 0.667, so a 5V worst-case
   swing becomes ~3.33V at the ADC pin, and the 2.5V DC bias becomes ~1.65V.
-- WiFi and MQTT connection code is still present in `main.cpp` (`setup()`
-  and `loop()`) but commented out — not deleted — since it drops back in
-  unmodified once MQTT publishing is wired up.
 
 ## How the RMS calculation works (`rms_current.cpp`)
 
@@ -80,20 +90,23 @@ being set up separately later.
   full-scale (4095 counts = 3.3V), matching `analogReadResolution(12)` and
   `analogSetAttenuation(ADC_11db)` set in `initCurrentSensor()`.
 
-**10-second rolling RMS** (`main.cpp` `loop()`):
+**5-second rolling RMS** (`main.cpp` `loop()`, `AVERAGING_WINDOW_SECONDS`):
 
-- Each 1-second reading's RMS is squared and stored in a 10-slot ring
+- Each 1-second reading's RMS is squared and stored in a 5-slot ring
   buffer (one per line).
-- The 10-second RMS is `sqrt(mean of the last 10 one-second mean-squares)`
+- The 5-second RMS is `sqrt(mean of the last 5 one-second mean-squares)`
   — averaging the *mean-squares* and taking the square root once at the end,
   not averaging the RMS values directly. This is the mathematically correct
   way to combine RMS values from equal-length, equal-sample-count windows;
   naively averaging RMS values themselves would be a (usually small, but
   needless) approximation error.
+- The window was 10 seconds originally; shortened to 5 seconds so the
+  smoothed reading used for MQTT publishing (below) tracks real changes
+  faster while still filtering out 1-second sample-to-sample noise.
 
 **Design intent: RMS first, calibrate once.** The calibration equations
 (next section) are only ever applied to an already-RMS'd ADC value — the
-1-second RMS or the 10-second RMS — never to individual raw samples or to a
+1-second RMS or the 5-second RMS — never to individual raw samples or to a
 per-sample current that then gets averaged/RMS'd separately. Converting
 each sample to a current first and RMS-ing *those* would be a different
 (and wrong) calculation, since the calibration polynomials are nonlinear
@@ -187,11 +200,12 @@ circuit, and 120V mains has entirely different source impedance than the
 240V AC circuit's. The two real (amps, voltage) points in the table above
 are the only voltage-sag data collected on the actual circuit so far.
 
-`main.cpp` computes voltage/power from the smoothed 10-second amps
-(`amps_10s`), not the noisier 1-second reading, and prints them over
-serial. `publishPower()` (`src/mqtt_handler.cpp`, targeting
-`MQTT_TOPIC_POWER`) exists and takes the computed power directly, but isn't
-called yet — MQTT is being wired up separately later.
+`main.cpp` computes voltage/power from the smoothed 5-second amps
+(`amps_5s`), not the noisier 1-second reading. It's printed over serial
+every second (alongside the faster 1-second reading, for live debugging),
+and separately published to `MQTT_TOPIC_POWER` via `publishPower()`
+(`src/mqtt_handler.cpp`) every 5 seconds, on its own timer independent of
+the serial print cadence.
 
 ### Sanity check: blower fan reading (7.01A) vs. the 7.5A voltage-sag point
 
@@ -246,9 +260,26 @@ a similar freeze recurs, telling the two apart will need another method —
 e.g. checking whether the MQTT-controlled LED still responds, or
 reintroducing a dedicated heartbeat if it becomes necessary again.
 
+## WiFi connect issue investigated, resolved
+
+WiFi wasn't connecting on first attempts even with SSID/password confirmed
+correct. Root cause not conclusively identified — the original connect
+loop (`WiFi.begin()` followed by a bare `while (WiFi.status() !=
+WL_CONNECTED)`) gave no diagnostic at all, so there was no way to tell
+"still connecting," "wrong password," and "SSID not found" apart from the
+serial output. That loop now prints the `WiFi.status()` code (decoded for
+the common failure cases) after 15 seconds and retries with a fresh
+`WiFi.mode(WIFI_STA)` / `WiFi.disconnect(true)` / `WiFi.begin()`, in case
+stale STA/AP state from a previous run was blocking a clean connect. After
+this change (and re-flashing), the device connected successfully — whether
+the fix or something environmental (router, signal) resolved it isn't
+fully confirmed, but the improved diagnostics are worth keeping either way
+in case a similar issue recurs.
+
 ## Next steps
 
-See [Project_plan.md](Project_plan.md) for the full roadmap. Immediately
-next: wire MQTT publishing back up (uncomment the WiFi/MQTT code in
-`main.cpp`, call `publishPower(power_10s)`), then collect more voltage-sag
-data points to firm up the current single-point fit.
+See [Project_plan.md](Project_plan.md) for the full roadmap. MQTT
+publishing is now live (see above). Immediately next: verify the published
+`MQTT_TOPIC_POWER` values against a Home Assistant/MQTT client, then
+collect more voltage-sag data points to firm up the current single-point
+fit.
