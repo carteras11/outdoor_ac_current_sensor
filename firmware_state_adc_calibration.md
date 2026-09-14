@@ -118,13 +118,14 @@ ones. Worth keeping in mind if this code gets restructured later.
 `calculateAmps(unamp_adc_rms, amp_adc_rms)` turns the two raw ADC RMS
 readings into one amps value:
 
-1. **Noise floor.** If `amp_adc_rms <= 20.0`, return `0.0` immediately — no
-   polynomial is evaluated. The amplified line is used for this check (not
-   unamplified) because it's the more sensitive of the two at small
+1. **Noise floor.** If `amp_adc_rms <= 200.0`, return `0.0` immediately —
+   no polynomial is evaluated. The amplified line is used for this check
+   (not unamplified) because it's the more sensitive of the two at small
    currents — it moves more per amp near zero, so it separates "no load"
-   from "a little load" more clearly. No-load baseline measured during
-   calibration was unamp=6.4, amp=10; 20 is set above that with margin for
-   noise.
+   from "a little load" more clearly. This threshold corresponds to
+   ~0.28A / ~70W and is set much higher than the bench no-load baseline
+   (unamp=6.4, amp=10) because of real on-device noise — see "Noise floor /
+   WiFi interference" below.
 2. **Unamplified estimate.** Otherwise, run `unamp_adc_rms` through a
    degree-2 polynomial fit across the full measured current range.
 3. **Above ~4A:** the unamplified estimate is returned as-is. The amplified
@@ -148,6 +149,90 @@ has **no measurements between ~1A and ~6.7A**, so the 1A/2A/4A blend
 anchors themselves are extrapolated, not validated against real
 measurements in that range — worth re-checking if more calibration data
 gets collected there.
+
+### Noise floor / WiFi interference
+
+With the device running on WiFi in its actual installed location (not on
+the bench), no-load readings were consistently 10-50+ watts instead of 0 —
+e.g. one sample: `Unamp RMS: 15.5 | Amp RMS: 133.8 | Amps: 0.188A` (1s),
+`Unamp RMS: 17.9 | Amp RMS: 159.6 | Amps: 0.229A | Power: 56.2W` (5s), with
+nothing plugged in. The original noise-floor threshold (`amp_adc_rms <=
+20`) was tuned against a quiet bench no-load baseline (amp=10) and didn't
+account for this.
+
+A few things ruled out simpler explanations:
+
+- **Not something averaging fixes.** The 5-second smoothed reading was
+  *higher* than the 1-second reading in both examples above, not lower —
+  this isn't zero-mean noise that a longer window would average toward
+  zero, it's a persistent bias. The window size (see "5-second rolling
+  RMS" above) doesn't help here.
+- **Scales with the analog gain, not ADC-independent.** The elevated
+  amp/unamp readings track each other at roughly the amplifier's own gain
+  (133.8/15.5 ≈ 8.6, 159.6/17.9 ≈ 8.9, vs. the front-end's ~10x amplified
+  line) — both channels are seeing the *same* interference, amplified
+  proportionally by whatever stage each line passes through. If this were
+  an ADC-sampling or firmware-timing artifact (e.g. the WiFi stack stealing
+  CPU cycles mid-sample-loop), it wouldn't track the analog gain like that.
+  This points to the noise entering the analog signal itself — RF pickup
+  or power-supply noise coupling into the front-end — rather than a
+  software/ADC-domain problem, which means firmware timing tricks (e.g.
+  trying to avoid sampling during WiFi transmit bursts) are unlikely to
+  fix it, since the interference isn't tied to the CPU's sampling loop.
+
+**Fix applied:** raised `NOISE_FLOOR_AMP_ADC` from 20 to 200 (~0.28A /
+~70W at no-load voltage) — comfortably above the observed noise ceiling
+(~160 counts / ~56W) — so anything below that reads as a clean 0 instead of
+a fabricated small wattage. This means **the device currently cannot
+reliably report any load under ~70W**; real loads in that range will read
+as 0.
+
+**Future improvement (not implemented):** increasing the amplified
+channel's gain beyond the current ~10x would improve signal-to-noise for
+currents under ~0.5A, since a stronger real signal would sit further above
+this same noise floor. Worth revisiting if measuring small loads (under
+70W) becomes a requirement.
+
+**Root cause still unconfirmed -- two candidate mechanisms, not yet
+distinguished:**
+
+- **Shared power-rail noise.** The ESP32's WiFi TX draws current in sharp
+  bursts (up to ~300-500mA). If that shares a supply/regulator (even
+  indirectly, via a common 5V rail or ground plane) with the analog
+  front-end, those bursts can show up as ripple on the analog Vref/supply.
+- **RF field coupling.** The antenna and its transmit bursts could be
+  coupling directly into nearby analog traces/wires, independent of the
+  power rail entirely.
+
+Both would produce the same observed signature (noise scaling with the
+analog gain), so the sample data alone doesn't distinguish them. A cheap
+diagnostic that would: run the board off a completely different, isolated
+power source (battery bank, or a USB brick on a different circuit than
+whatever's already suspected of being noisy) and see if the noise floor
+changes. A significant drop points to the supply-rail hypothesis; no change
+points toward RF.
+
+**Candidate fixes, cheapest first:**
+
+1. **Better decoupling on the current board** (if it's supply-rail noise):
+   bulk capacitance (100-470uF) near the ESP32's supply pins, and/or a
+   dedicated/isolated regulator feeding just the analog section's Vref and
+   op-amps, separate from whatever feeds the ESP32 digital core and radio.
+   Cheapest option if the diagnostic above points this way.
+2. **Shielding/layout changes** (if it's RF coupling): physically
+   separating or shielding the antenna/RF section from the analog CT and
+   op-amp circuitry on the current board.
+3. **Split the WiFi radio onto a second ESP32.** Sense/compute on the
+   current board as today, but instead of that board handling WiFi/MQTT
+   itself, have it send the computed power payload over UART to a second
+   ESP32 (on its own, separate power supply) that owns the WiFi connection
+   and does the MQTT publish. This addresses *both* candidate mechanisms
+   at once (no shared supply, and physical distance from the antenna),
+   without needing to first diagnose which one is the actual cause -- the
+   tradeoff is it's a meaningfully bigger change (two boards, a UART link,
+   two power supplies, splitting the firmware into a producer/consumer
+   pair) than either of the two options above, so worth trying only if the
+   simpler fixes don't pan out, or if the diagnostic above is inconclusive.
 
 ### Retrospective: is the amplified channel actually still needed?
 

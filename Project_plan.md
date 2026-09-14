@@ -1,6 +1,11 @@
 # ESP32 HVAC Outdoor Current Monitor - Project Plan
 
-## Current State (2026-09-13)
+**Project on hold as of 2026-09-14** — paused with the noise-floor
+workaround in place (see below); pick up at "Immediate Next Steps" or the
+noise-source investigation under "Longer-Term / Parked Ideas" when
+resumed.
+
+## Current State (2026-09-14)
 
 - WiFi + MQTT connectivity: working, on-device confirmed (`main.cpp`,
   `mqtt_handler.cpp/h`). The WiFi connect step now forces station mode and
@@ -46,6 +51,16 @@
   validating with more (amps, voltage) pairs. See
   [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
   ("Voltage sag / power estimate").
+- **Known limitation: ~70W noise floor.** On-device (with WiFi running,
+  not on the bench), no-load readings sit on a noise floor of
+  ~amp_adc_rms=100-160 instead of near-zero -- both channels elevated
+  together in roughly the analog gain ratio, pointing to RF/power-supply
+  noise entering the analog signal itself rather than an ADC/software
+  timing issue. `NOISE_FLOOR_AMP_ADC` (`src/calibration.cpp`) raised from
+  20 to 200 (~70W) to filter it, meaning the device currently can't
+  reliably report loads under ~70W -- they read as 0. See
+  [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
+  ("Noise floor / WiFi interference").
 - Firmware (`src/rms_current.cpp/h`, `src/calibration.cpp/h`,
   `src/power.cpp/h`, `src/main.cpp`): connects to WiFi/MQTT, samples both
   ADC lines, converts to calibrated amps via `calculateAmps()`, derives
@@ -82,7 +97,28 @@
   both the hardware (one fewer gain stage) and the firmware (one fewer
   calibration curve, no blend logic). See
   [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
-  ("Retrospective: is the amplified channel actually still needed?").
+  ("Retrospective: is the amplified channel actually still needed?"). Note
+  the tension with the next item below -- *increasing* the amplified
+  channel's gain is one option for the sub-70W noise floor, which would cut
+  the other way; worth deciding between "drop it" and "strengthen it" once
+  there's a clearer read on whether small-load measurement matters for this
+  use case.
+- Increase the amplified channel's gain beyond ~10x to improve
+  signal-to-noise for currents under ~0.5A, which would push real small
+  loads further above the ~70W noise floor described above. Only worth
+  doing if measuring loads under 70W becomes a real requirement.
+- **Investigate the root cause of the ~70W noise floor** — two candidate
+  mechanisms not yet distinguished (shared power-rail noise from WiFi TX
+  current bursts, vs. RF field coupling into the analog traces), a cheap
+  diagnostic to tell them apart (run off an isolated power source and see
+  if the noise floor changes), and candidate fixes ranging from cheap
+  (decoupling capacitors / a dedicated analog regulator, or shielding) to
+  a bigger architectural change (split the WiFi radio onto a second ESP32,
+  on its own power supply, talking to the sensing board over UART — this
+  fixes both candidate mechanisms at once but is a meaningfully bigger
+  change than the others). Full writeup in
+  [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
+  ("Noise floor / WiFi interference" — "Root cause still unconfirmed").
 - Power factor measurement: peak-timing method using a resistor-divider
   voltage sense, combined with the already-integrated CT signal (see handoff
   doc's "Next steps"). The LM741 freed up by moving the integrator to the

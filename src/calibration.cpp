@@ -5,10 +5,20 @@
 // below. The amplified line is used here (not unamplified) because it's
 // the more sensitive of the two at small currents -- it moves more per amp
 // near zero, so it separates "no load" from "a little load" better than
-// the unamplified line would. No-load baseline measured during calibration
-// was unamp_adc_rms=6.4, amp_adc_rms=10; this threshold is set above that
-// with margin for noise.
-static const float NOISE_FLOOR_AMP_ADC = 20.0f;
+// the unamplified line would.
+//
+// This is set much higher than the bench no-load baseline (unamp=6.4,
+// amp=10) because with WiFi running on the actual installed device, both
+// channels sit on a noise floor around amp_adc_rms=100-160 (unamp ~12-18)
+// even with nothing plugged in -- both channels elevated in roughly the
+// analog gain ratio (~8-10x), which points to the noise entering on the
+// analog signal itself (RF/EMI pickup or supply noise), not ADC/software
+// timing jitter, so it isn't something firmware can average or time away.
+// 200 corresponds to ~70W (~0.28A) at no-load voltage -- below that, treat
+// it as unmeasurable rather than report a fake near-zero wattage. See
+// firmware_state_adc_calibration.md ("Noise floor / WiFi interference")
+// for the full writeup.
+static const float NOISE_FLOOR_AMP_ADC = 200.0f;
 
 // The amplified line has no basis above this current -- it saturates
 // around 6A and was only fit against measurements up to 4A during
