@@ -2,10 +2,12 @@
 
 Snapshot of the firmware as of this commit: a serial-only build for the
 two-line analog front-end described in
-[ac_current_monitor_handoff_v2.md](ac_current_monitor_handoff_v2.md). It now
+[ac_current_monitor_handoff_v2.md](ac_current_monitor_handoff_v2.md). It
 converts both lines' ADC RMS into a calibrated amps value on-device
-(`src/calibration.cpp`) and prints that instead of raw ADC counts. This is
-still not the production firmware — no MQTT publishing yet.
+(`src/calibration.cpp`) and derives an estimated voltage and power from that
+(`src/power.cpp`), printing all three over serial. MQTT publishing exists
+(`publishPower()` in `src/mqtt_handler.cpp`) but is not wired up yet — that's
+being set up separately later.
 
 ## What this build does
 
@@ -14,9 +16,13 @@ still not the production firmware — no MQTT publishing yet.
 - Computes RMS of each line in software.
 - Converts each line's RMS into amps and blends the two per
   `calculateAmps()` (see "Calibration / amps conversion" below).
+- Derives voltage and power from the smoothed 10-second amps via
+  `calculateVoltage()` / `calculatePower()` (see "Voltage sag / power
+  estimate" below).
 - Prints, once per second, over Serial (115200 baud):
   - The calculated amps from the 1-second RMS.
-  - The calculated amps from a rolling 10-second RMS.
+  - The calculated amps, estimated voltage, and power from a rolling
+    10-second RMS.
   - The achieved sample rate.
 - Blinks the onboard LED (GPIO2) every ~100ms as a heartbeat, independent of
   the measurement/print cycle — a quick way to tell a firmware hang apart
@@ -39,7 +45,7 @@ still not the production firmware — no MQTT publishing yet.
   swing becomes ~3.33V at the ADC pin.
 - WiFi and MQTT connection code is still present in `main.cpp` (`setup()`
   and `loop()`) but commented out — not deleted — since it drops back in
-  unmodified once a calibration equation exists to publish real current data.
+  unmodified once MQTT publishing is wired up.
 
 ## How the RMS calculation works (`rms_current.cpp`)
 
@@ -116,6 +122,31 @@ anchors themselves are extrapolated, not validated against real
 measurements in that range — worth re-checking if more calibration data
 gets collected there.
 
+## Voltage sag / power estimate (`src/power.cpp`)
+
+`calculateVoltage(amps)` and `calculatePower(amps)` implement a simple
+linear voltage-sag model — i.e. assuming a constant wire/source resistance,
+so the line voltage under load drops proportionally with current:
+
+```
+voltage = NO_LOAD_VOLTAGE - VOLTAGE_SAG_PER_AMP * amps
+power   = voltage * amps
+```
+
+`NO_LOAD_VOLTAGE` and `VOLTAGE_SAG_PER_AMP` (in `src/config.h`) are
+**placeholder values right now** (240V, 1V/amp) — not yet measured. The
+intended tuning process: measure line voltage with no load, then measure
+line voltage and current together under a known load, and solve for the
+slope from those two points. See
+`callibration/voltage_sag_measurments_240.ods` for that data as it's
+collected.
+
+`main.cpp` computes voltage/power from the smoothed 10-second amps
+(`amps_10s`), not the noisier 1-second reading, and prints them over
+serial. `publishPower()` (`src/mqtt_handler.cpp`, targeting
+`MQTT_TOPIC_POWER`) exists and takes the computed power directly, but isn't
+called yet — MQTT is being wired up separately later.
+
 ## Known issue investigated, not reproduced
 
 A freeze was observed once at higher current with a resistive heater load,
@@ -131,6 +162,6 @@ reproduced on the most recent test.
 ## Next steps
 
 See [Project_plan.md](Project_plan.md) for the full roadmap. Immediately
-next: bring MQTT current/power publishing back using `calculateAmps()` in
-place of the old placeholder `CURRENT_VOLTS_PER_AMP` constant, then verify
-against varied load types.
+next: wire MQTT publishing back up (uncomment the WiFi/MQTT code in
+`main.cpp`, call `publishPower(power_10s)`), then measure and tune the real
+`NO_LOAD_VOLTAGE`/`VOLTAGE_SAG_PER_AMP` values (currently placeholders).

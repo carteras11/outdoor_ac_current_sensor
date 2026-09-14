@@ -26,24 +26,36 @@
   for how it was derived. Note the calibration data has no measurements
   between ~1A and ~6.7A, so the blend crossover region is extrapolated, not
   validated — worth revisiting if more calibration data is collected.
-- Firmware (`src/rms_current.cpp/h`, `src/calibration.cpp/h`, `src/main.cpp`):
-  serial-only build. Samples both ADC lines, converts each to calibrated
-  amps via `calculateAmps()`, and prints the 1-second and rolling
-  10-second amps once per second. WiFi/MQTT still connect but nothing is
-  published yet.
+- Voltage sag / power: linear model (`src/power.cpp`,
+  `calculateVoltage`/`calculatePower`) — `voltage = NO_LOAD_VOLTAGE -
+  VOLTAGE_SAG_PER_AMP * amps`, `power = voltage * amps`. Assumes constant
+  wire/source resistance. `NO_LOAD_VOLTAGE`/`VOLTAGE_SAG_PER_AMP` in
+  `src/config.h` are **placeholders (240V, 1V/amp), not yet measured**. See
+  [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
+  ("Voltage sag / power estimate").
+- Firmware (`src/rms_current.cpp/h`, `src/calibration.cpp/h`,
+  `src/power.cpp/h`, `src/main.cpp`): serial-only build. Samples both ADC
+  lines, converts to calibrated amps via `calculateAmps()`, derives
+  voltage/power from the smoothed 10-second amps, and prints amps/voltage/
+  power over serial. WiFi/MQTT connection code is present (commented out)
+  and `publishPower()` is ready to call, but publishing isn't wired up yet
+  — being set up separately later.
 
 ## Immediate Next Steps
 
-1. **Bring MQTT current publishing back**, using `calculateAmps()` in place
-   of the placeholder `CURRENT_VOLTS_PER_AMP` constant from the old
-   single-line implementation.
-2. **Verify against varied load types** (linear resistive, switch-mode, LED
+1. **Wire MQTT publishing back up**: uncomment the WiFi/MQTT code in
+   `main.cpp` (`setup()` and `loop()`) and call `publishPower(power_10s)`.
+2. **Measure and tune the voltage sag model.** Record no-load voltage and
+   at least one (amps, voltage-under-load) pair to solve for
+   `VOLTAGE_SAG_PER_AMP`, replacing the current 240V/1A-per-volt
+   placeholders in `src/config.h`.
+3. **Verify against varied load types** (linear resistive, switch-mode, LED
    driver, VFD) to confirm the true-RMS approach holds up outside pure
    sinusoids.
-3. **Collect calibration data in the ~1-6A range** to validate (or correct)
-   the blend crossover, which is currently extrapolated across a gap in the
-   measured data.
-4. Re-evaluate whether/when to bring back temperature sensing and any web
+4. **Collect calibration data in the ~1-6A range** to validate (or correct)
+   the current blend crossover, which is currently extrapolated across a gap
+   in the measured data.
+5. Re-evaluate whether/when to bring back temperature sensing and any web
    display, once current sensing is solid.
 
 ## Longer-Term / Parked Ideas

@@ -2,15 +2,19 @@
 #include "config.h"
 #include "rms_current.h"
 #include "calibration.h"
+#include "power.h"
 #include <WiFi.h>
 #include "mqtt_handler.h"
 
 // Serial-only build: samples both analog front-end lines, converts each
 // second's (and each rolling 10-second) ADC RMS into calibrated amps via
-// calculateAmps(), and prints the result. See
-// callibration/CALIBRATION_METHODOLOGY.md for how the calibration equations
-// were derived. WiFi/MQTT connection code is kept but commented out below
-// for now - not needed for serial-only current readout.
+// calculateAmps(), then derives voltage (sag model, see config.h) and power
+// from the 10-second amps, printing all three (amps/voltage/power) over
+// Serial. See callibration/CALIBRATION_METHODOLOGY.md for how the current
+// calibration equations were derived, and firmware_state_adc_calibration.md
+// for how the voltage/power pieces fit in. WiFi/MQTT connection code is
+// kept but commented out below - MQTT wiring (publishing power, tuning
+// reconnect behavior, etc.) is being set up separately later.
 
 WiFiClient espClient;
 
@@ -32,10 +36,10 @@ void setup() {
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, LOW); //LED off at first
 
-    Serial.println("\n=== ESP32 HVAC Outdoor Monitor - ADC RMS Calibration ===\n");
+    Serial.println("\n=== ESP32 HVAC Outdoor Monitor - Serial Readout ===\n");
 
-    // WiFi/MQTT disabled for serial-only calibration - re-enable when ready
-    // to publish current readings again.
+    // WiFi/MQTT disabled for now - re-enable when ready to publish
+    // readings again.
     // Serial.println("connecting to wifi");
     // WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     //
@@ -106,13 +110,22 @@ void loop() {
                                        result.adc_rms_raw_amplified);
         float amps_10s = calculateAmps(avg10_unamp_raw, avg10_amp_raw);
 
+        // Voltage/power use the smoothed 10s amps rather than the noisier
+        // 1s reading.
+        float voltage_10s = calculateVoltage(amps_10s);
+        float power_10s = calculatePower(amps_10s);
+
         char line[100];
         Serial.println("---");
         sprintf(line, "1s  | Amps: %6.3f A", amps_1s);
         Serial.println(line);
-        sprintf(line, "10s | Amps: %6.3f A", amps_10s);
+        sprintf(line, "10s | Amps: %6.3f A  |  Voltage: %6.1f V  |  Power: %7.1f W",
+                amps_10s, voltage_10s, power_10s);
         Serial.println(line);
         sprintf(line, "Sample rate: %.0f Hz", result.sample_rate_hz);
         Serial.println(line);
+
+        // MQTT publishing (publishPower(power_10s)) intentionally not
+        // wired up yet - see setup().
     }
 }
