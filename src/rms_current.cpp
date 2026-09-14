@@ -24,8 +24,10 @@ void initCurrentSensor() {
     Serial.println(CURRENT_SAMPLES);
 }
 
-// Both lines are centered on ~2.5V (Vref), not 0V, so RMS is computed on the
-// deviation from each buffer's own mean rather than on the raw ADC counts.
+// Both lines are centered on ~1.65V at the ADC pin (the analog front-end's
+// 2.5V Vref, scaled down by the resistor divider to land on the ADC's own
+// mid-scale), not 0V, so RMS is computed on the deviation from each
+// buffer's own mean rather than on the raw ADC counts.
 static float calculateRMS(int samples[], int count) {
     long sum = 0;
     for (int i = 0; i < count; i++) {

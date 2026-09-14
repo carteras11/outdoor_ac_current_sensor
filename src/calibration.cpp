@@ -1,10 +1,14 @@
 #include "calibration.h"
 
-// Below this raw ADC RMS on the unamplified line, treat the reading as no
-// measurable load (matches the no-load baseline measured during
-// calibration: unamp_adc_rms=6.4, amp_adc_rms=10) rather than running it
-// through the calibration equations below.
-static const float NOISE_FLOOR_UNAMP_ADC = 7.0f;
+// Below this raw ADC RMS on the AMPLIFIED line, treat the reading as no
+// measurable load rather than running it through the calibration equations
+// below. The amplified line is used here (not unamplified) because it's
+// the more sensitive of the two at small currents -- it moves more per amp
+// near zero, so it separates "no load" from "a little load" better than
+// the unamplified line would. No-load baseline measured during calibration
+// was unamp_adc_rms=6.4, amp_adc_rms=10; this threshold is set above that
+// with margin for noise.
+static const float NOISE_FLOOR_AMP_ADC = 20.0f;
 
 // The amplified line has no basis above this current -- it saturates
 // around 6A and was only fit against measurements up to 4A during
@@ -52,7 +56,7 @@ static float amplifiedWeight(float estimated_amps) {
 }
 
 float calculateAmps(float unamp_adc_rms, float amp_adc_rms) {
-    if (unamp_adc_rms <= NOISE_FLOOR_UNAMP_ADC) {
+    if (amp_adc_rms <= NOISE_FLOOR_AMP_ADC) {
         return 0.0f;
     }
 

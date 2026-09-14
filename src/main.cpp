@@ -20,8 +20,6 @@ WiFiClient espClient;
 
 unsigned long lastMeasurement = 0;
 unsigned long lastMQTTReconnect = 0;
-unsigned long lastHeartbeat = 0;
-bool heartbeatState = false;
 
 #define AVERAGING_WINDOW_SECONDS 10
 float history_unamp_sq[AVERAGING_WINDOW_SECONDS] = {0};
@@ -34,7 +32,7 @@ void setup() {
     delay(2000);
 
     pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, LOW); //LED off at first
+    digitalWrite(LED_PIN, LOW); //LED off at first (still MQTT-controllable, see mqtt_handler.cpp)
 
     Serial.println("\n=== ESP32 HVAC Outdoor Monitor - Serial Readout ===\n");
 
@@ -61,16 +59,6 @@ void setup() {
 }
 
 void loop() {
-
-    // Heartbeat blink, independent of the measurement cadence below -
-    // if this stops toggling, the firmware is actually hung. If it keeps
-    // blinking while the serial monitor goes quiet, the serial/USB link
-    // dropped instead.
-    if (millis() - lastHeartbeat >= 100) {
-        lastHeartbeat = millis();
-        heartbeatState = !heartbeatState;
-        digitalWrite(LED_PIN, heartbeatState);
-    }
 
     // Maintain MQTT connection (disabled - see setup())
     // if (!isMQTTConnected()) {
@@ -115,12 +103,13 @@ void loop() {
         float voltage_10s = calculateVoltage(amps_10s);
         float power_10s = calculatePower(amps_10s);
 
-        char line[100];
+        char line[140];
         Serial.println("---");
-        sprintf(line, "1s  | Amps: %6.3f A", amps_1s);
+        sprintf(line, "1s  | Unamp RMS: %6.1f  |  Amp RMS: %6.1f  |  Amps: %6.3f A",
+                result.adc_rms_raw_unamplified, result.adc_rms_raw_amplified, amps_1s);
         Serial.println(line);
-        sprintf(line, "10s | Amps: %6.3f A  |  Voltage: %6.1f V  |  Power: %7.1f W",
-                amps_10s, voltage_10s, power_10s);
+        sprintf(line, "10s | Unamp RMS: %6.1f  |  Amp RMS: %6.1f  |  Amps: %6.3f A  |  Voltage: %6.1f V  |  Power: %7.1f W",
+                avg10_unamp_raw, avg10_amp_raw, amps_10s, voltage_10s, power_10s);
         Serial.println(line);
         sprintf(line, "Sample rate: %.0f Hz", result.sample_rate_hz);
         Serial.println(line);
