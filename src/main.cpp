@@ -1,13 +1,16 @@
 #include <Arduino.h>
 #include "config.h"
 #include "rms_current.h"
+#include "calibration.h"
 #include <WiFi.h>
 #include "mqtt_handler.h"
 
-// Serial-only ADC calibration build: prints raw ADC RMS for both analog
-// front-end lines so current can be measured by hand against known loads
-// and the ADC-rms -> amps equation derived. WiFi/MQTT connection code is
-// kept but commented out below for now - not needed for serial calibration.
+// Serial-only build: samples both analog front-end lines, converts each
+// second's (and each rolling 10-second) ADC RMS into calibrated amps via
+// calculateAmps(), and prints the result. See
+// callibration/CALIBRATION_METHODOLOGY.md for how the calibration equations
+// were derived. WiFi/MQTT connection code is kept but commented out below
+// for now - not needed for serial-only current readout.
 
 WiFiClient espClient;
 
@@ -98,17 +101,16 @@ void loop() {
         }
         float avg10_unamp_raw = sqrt(sum_unamp_sq / history_count);
         float avg10_amp_raw = sqrt(sum_amp_sq / history_count);
-        float avg10_unamp_v = (avg10_unamp_raw / 4095.0) * 3.3;
-        float avg10_amp_v = (avg10_amp_raw / 4095.0) * 3.3;
+
+        float amps_1s = calculateAmps(result.adc_rms_raw_unamplified,
+                                       result.adc_rms_raw_amplified);
+        float amps_10s = calculateAmps(avg10_unamp_raw, avg10_amp_raw);
 
         char line[100];
         Serial.println("---");
-        sprintf(line, "1s  | Unamp ADC RMS: %6.1f (%.3fV)  |  Amp ADC RMS: %6.1f (%.3fV)",
-                result.adc_rms_raw_unamplified, result.adc_rms_voltage_unamplified,
-                result.adc_rms_raw_amplified, result.adc_rms_voltage_amplified);
+        sprintf(line, "1s  | Amps: %6.3f A", amps_1s);
         Serial.println(line);
-        sprintf(line, "10s | Unamp ADC RMS: %6.1f (%.3fV)  |  Amp ADC RMS: %6.1f (%.3fV)",
-                avg10_unamp_raw, avg10_unamp_v, avg10_amp_raw, avg10_amp_v);
+        sprintf(line, "10s | Amps: %6.3f A", amps_10s);
         Serial.println(line);
         sprintf(line, "Sample rate: %.0f Hz", result.sample_rate_hz);
         Serial.println(line);

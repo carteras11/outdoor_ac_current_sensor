@@ -17,26 +17,33 @@
   - RMS is computed digitally (`sqrt(mean(i(t)^2))`), not via analog
     rectification, so it's accurate for non-sinusoidal loads (VFDs,
     switch-mode supplies, etc.), not just pure sine waves.
-- Firmware (`src/rms_current.cpp/h`, `src/main.cpp`): currently a serial-only
-  calibration build. Samples both ADC lines together, prints raw ADC RMS
-  (counts + volts) once per second plus a rolling 10-second RMS, so real
-  current can be measured against known loads and an ADC-rms -> amps equation
-  derived by hand. WiFi/MQTT still connect but nothing is published yet.
+- Current calibration: done, using `callibration/measurments.csv`. Degree-2
+  polynomial fits for both lines, blended below ~4A with a piecewise-linear
+  weighting, implemented in `src/calibration.cpp`. See
+  [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
+  ("Calibration / amps conversion") and
+  [callibration/CALIBRATION_METHODOLOGY.md](callibration/CALIBRATION_METHODOLOGY.md)
+  for how it was derived. Note the calibration data has no measurements
+  between ~1A and ~6.7A, so the blend crossover region is extrapolated, not
+  validated — worth revisiting if more calibration data is collected.
+- Firmware (`src/rms_current.cpp/h`, `src/calibration.cpp/h`, `src/main.cpp`):
+  serial-only build. Samples both ADC lines, converts each to calibrated
+  amps via `calculateAmps()`, and prints the 1-second and rolling
+  10-second amps once per second. WiFi/MQTT still connect but nothing is
+  published yet.
 
 ## Immediate Next Steps
 
-1. **Run the calibration build.** Apply known resistive loads, record
-   amps (measured independently) vs. the printed ADC RMS for both lines.
-2. **Derive the calibration equation(s).** Likely a linear fit
-   (`amps = m * adc_rms_volts + b`) per line, plus a crossover point/current
-   at which to switch from the amplified line to the unamplified line.
-3. **Bring MQTT current publishing back**, using the derived equation(s) in
-   place of the placeholder `CURRENT_VOLTS_PER_AMP` constant from the old
+1. **Bring MQTT current publishing back**, using `calculateAmps()` in place
+   of the placeholder `CURRENT_VOLTS_PER_AMP` constant from the old
    single-line implementation.
-4. **Verify against varied load types** (linear resistive, switch-mode, LED
+2. **Verify against varied load types** (linear resistive, switch-mode, LED
    driver, VFD) to confirm the true-RMS approach holds up outside pure
    sinusoids.
-5. Re-evaluate whether/when to bring back temperature sensing and any web
+3. **Collect calibration data in the ~1-6A range** to validate (or correct)
+   the blend crossover, which is currently extrapolated across a gap in the
+   measured data.
+4. Re-evaluate whether/when to bring back temperature sensing and any web
    display, once current sensing is solid.
 
 ## Longer-Term / Parked Ideas

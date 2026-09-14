@@ -1,0 +1,28 @@
+Loaded 23 rows, dropped 1 baseline row(s) (device_name == 'none').
+Unamplified fit uses all 22 non-baseline rows (full range).
+Amplified fit uses only the 11 rows with avg_amps <= 4.0A (channel has no basis above that).
+
+*** DATA GAP: no measurements between 0.962A and 6.670A. The 1A/2A/4A blend anchors fall entirely inside this gap -- the blended R^2 below is NOT validated by any actual data in the crossover zone. Treat it as extrapolation, not evidence. ***
+
+Unamplified, full range:
+  deg 1: R^2=0.99925  y = 0.0137737*unamp + 0.0679339
+  deg 2: R^2=0.99985  y = -1.17767e-06*unamp^2 + 0.014949*unamp + -0.00831701
+
+Amplified, <= 4.0A only:
+  deg 1: R^2=0.99157  y = 0.00147931*amp + -0.01325
+  deg 2: R^2=0.99206  y = -2.11747e-07*amp^2 + 0.00162551*amp + -0.0275632
+
+Blend weight on amplified channel (piecewise-linear): 0A=1.00, 1A=0.75, 2A=0.50, 4.0A=0.00, flat 0.00 beyond 4.0A.
+
+Blended ('DJ mixer') R^2, evaluated on the <= 4.0A subset (n=11):
+  deg 1: R^2=0.99161
+  deg 2: R^2=0.99123
+
+Stitched full-range pipeline (blend below 4.0A using both channels, plain unamplified fit above, evaluated on all 22 non-baseline rows):
+  deg 1: R^2=0.99934
+  deg 2: R^2=0.99988
+
+Notes / firmware follow-ups (not implemented here):
+  - No-load baseline was unamp_adc_rms=6.4, amp_adc_rms=10.0. At runtime, readings at or below roughly unamp_adc_rms=7.0 / amp_adc_rms=20 should be treated as no measurable load and reported as 0A.
+  - The amplified channel should be ignored entirely above 4.0A in firmware, matching the cutoff used here.
+  - The blend weight above is a function of true/reference amps, which the firmware does not have at runtime. Translating this into a runtime-usable trigger is a separate follow-up.

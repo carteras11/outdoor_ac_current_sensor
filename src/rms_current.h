@@ -4,8 +4,7 @@
 #include <Arduino.h>
 
 // Raw ADC RMS measurement result for both analog front-end lines.
-// No current/power conversion yet — that requires the calibration equation
-// this program's serial output is used to derive.
+// Current/power conversion happens separately, in calibration.h/.cpp.
 struct CurrentMeasurement {
     float adc_rms_raw_unamplified;     // counts, 0-4095
     float adc_rms_voltage_unamplified; // volts

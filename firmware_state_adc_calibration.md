@@ -1,19 +1,22 @@
 # Firmware State — ADC RMS Calibration Build
 
-Snapshot of the firmware as of this commit: a serial-only build used to
-collect ADC-rms-vs-actual-current data points for the new two-line analog
-front-end described in [ac_current_monitor_handoff_v2.md](ac_current_monitor_handoff_v2.md).
-This is not the production firmware — no MQTT publishing, no current/power
-conversion yet, since the calibration equation doesn't exist yet.
+Snapshot of the firmware as of this commit: a serial-only build for the
+two-line analog front-end described in
+[ac_current_monitor_handoff_v2.md](ac_current_monitor_handoff_v2.md). It now
+converts both lines' ADC RMS into a calibrated amps value on-device
+(`src/calibration.cpp`) and prints that instead of raw ADC counts. This is
+still not the production firmware — no MQTT publishing yet.
 
 ## What this build does
 
 - Samples both analog front-end lines (unamplified + amplified) via two ADC1
   pins on the ESP32.
 - Computes RMS of each line in software.
+- Converts each line's RMS into amps and blends the two per
+  `calculateAmps()` (see "Calibration / amps conversion" below).
 - Prints, once per second, over Serial (115200 baud):
-  - The 1-second RMS for both lines (raw ADC counts and volts).
-  - A rolling 10-second RMS for both lines.
+  - The calculated amps from the 1-second RMS.
+  - The calculated amps from a rolling 10-second RMS.
   - The achieved sample rate.
 - Blinks the onboard LED (GPIO2) every ~100ms as a heartbeat, independent of
   the measurement/print cycle — a quick way to tell a firmware hang apart
@@ -81,6 +84,38 @@ conversion yet, since the calibration equation doesn't exist yet.
   naively averaging RMS values themselves would be a (usually small, but
   needless) approximation error.
 
+## Calibration / amps conversion (`src/calibration.cpp`)
+
+`calculateAmps(unamp_adc_rms, amp_adc_rms)` turns the two raw ADC RMS
+readings into one amps value:
+
+1. **Noise floor.** If `unamp_adc_rms <= 7.0` (the no-load baseline measured
+   during calibration was unamp=6.4, amp=10), return `0.0` immediately —
+   no polynomial is evaluated.
+2. **Unamplified estimate.** Otherwise, run `unamp_adc_rms` through a
+   degree-2 polynomial fit across the full measured current range.
+3. **Above ~4A:** the unamplified estimate is returned as-is. The amplified
+   line is never evaluated up here — it saturates around 6A and its
+   calibration fit only used measurements up to 4A, so it has no basis
+   beyond that.
+4. **Below ~4A:** `amp_adc_rms` is also run through its own degree-2
+   polynomial fit (fit only on the <=4A data), and the two estimates are
+   blended with a piecewise-linear weight on the amplified channel: 1.0 at
+   0A, 0.75 at 1A, 0.50 at 2A, 0.0 at 4A. The weight is keyed off the
+   *unamplified* estimate from step 2, since that's the only current-like
+   signal available at runtime — the firmware has no independent "true
+   current" to drive the blend with.
+
+The coefficients and this weighting scheme came from fitting
+`callibration/measurments.csv` — see
+[callibration/CALIBRATION_METHODOLOGY.md](callibration/CALIBRATION_METHODOLOGY.md)
+for how they were derived, and `callibration/output/calibration_results.txt`
+for the exact fit run they were taken from. Notably, the calibration data
+has **no measurements between ~1A and ~6.7A**, so the 1A/2A/4A blend
+anchors themselves are extrapolated, not validated against real
+measurements in that range — worth re-checking if more calibration data
+gets collected there.
+
 ## Known issue investigated, not reproduced
 
 A freeze was observed once at higher current with a resistive heater load,
@@ -96,6 +131,6 @@ reproduced on the most recent test.
 ## Next steps
 
 See [Project_plan.md](Project_plan.md) for the full roadmap. Immediately
-next: run this build against known loads, record amps vs. printed ADC RMS
-for both lines, and derive the calibration equation(s) (plus a
-crossover point between the two lines) before bringing MQTT publishing back.
+next: bring MQTT current/power publishing back using `calculateAmps()` in
+place of the old placeholder `CURRENT_VOLTS_PER_AMP` constant, then verify
+against varied load types.
