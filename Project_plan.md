@@ -1,11 +1,10 @@
 # ESP32 HVAC Outdoor Current Monitor - Project Plan
 
-**Project on hold as of 2026-09-14** — paused with the noise-floor
-workaround in place (see below); pick up at "Immediate Next Steps" or the
-noise-source investigation under "Longer-Term / Parked Ideas" when
-resumed.
+**Resumed 2026-11-03** after being on hold since 2026-09-14. Current focus:
+back-checking the calibration accuracy with WiFi off, and measuring the
+WiFi-related noise floor — both laid out in [Test_plan.md](Test_plan.md).
 
-## Current State (2026-09-14)
+## Current State (2026-11-03)
 
 - WiFi + MQTT connectivity: working, on-device confirmed (`main.cpp`,
   `mqtt_handler.cpp/h`). The WiFi connect step now forces station mode and
@@ -51,16 +50,17 @@ resumed.
   validating with more (amps, voltage) pairs. See
   [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
   ("Voltage sag / power estimate").
-- **Known limitation: ~70W noise floor.** On-device (with WiFi running,
+- **Known limitation: WiFi noise floor.** On-device (with WiFi running,
   not on the bench), no-load readings sit on a noise floor of
-  ~amp_adc_rms=100-160 instead of near-zero -- both channels elevated
-  together in roughly the analog gain ratio, pointing to RF/power-supply
-  noise entering the analog signal itself rather than an ADC/software
-  timing issue. `NOISE_FLOOR_AMP_ADC` (`src/calibration.cpp`) raised from
-  20 to 200 (~70W) to filter it, meaning the device currently can't
-  reliably report loads under ~70W -- they read as 0. See
+  ~amp_adc_rms=100-160 instead of near-zero, with both channels elevated;
+  the cause (analog-side pickup vs. supply noise vs. something else) is
+  **not yet confirmed**. `NOISE_FLOOR_AMP_ADC` (`src/calibration.cpp`) was
+  raised from 20 to 200 (~70W) to filter it, so loads under ~70W read as 0.
+  After moving the device farther from the router the floor rose to ~150-200W
+  and the 200-count threshold no longer covers it (not yet changed, pending
+  more data). See
   [firmware_state_adc_calibration.md](firmware_state_adc_calibration.md)
-  ("Noise floor / WiFi interference").
+  ("Noise floor / WiFi interference") and [Test_plan.md](Test_plan.md).
 - Firmware (`src/rms_current.cpp/h`, `src/calibration.cpp/h`,
   `src/power.cpp/h`, `src/main.cpp`): connects to WiFi/MQTT, samples both
   ADC lines, converts to calibrated amps via `calculateAmps()`, derives
@@ -73,6 +73,9 @@ resumed.
 
 ## Immediate Next Steps
 
+0. **Run the tests in [Test_plan.md](Test_plan.md)**: calibration accuracy
+   check with WiFi off against reference meters, and noise-source
+   localization with a scope.
 1. **Verify MQTT publishing end-to-end**: confirm `MQTT_TOPIC_POWER`
    payloads arrive as expected and look correct (e.g. via `mosquitto_sub`
    or Home Assistant) — WiFi connects and the device is running, but the
@@ -109,9 +112,10 @@ resumed.
   doing if measuring loads under 70W becomes a real requirement.
 - **Investigate the root cause of the ~70W noise floor** — two candidate
   mechanisms not yet distinguished (shared power-rail noise from WiFi TX
-  current bursts, vs. RF field coupling into the analog traces), a cheap
-  diagnostic to tell them apart (run off an isolated power source and see
-  if the noise floor changes), and candidate fixes ranging from cheap
+  current bursts, vs. RF field coupling into the analog traces); trying
+  different external power supplies made no difference to the noise, and
+  the next step is probing the analog lines with WiFi on vs. off
+  (`Test_plan.md`). Candidate fixes range from cheap
   (decoupling capacitors / a dedicated analog regulator, or shielding) to
   a bigger architectural change (split the WiFi radio onto a second ESP32,
   on its own power supply, talking to the sensing board over UART — this

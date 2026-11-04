@@ -167,18 +167,19 @@ A few things ruled out simpler explanations:
   this isn't zero-mean noise that a longer window would average toward
   zero, it's a persistent bias. The window size (see "5-second rolling
   RMS" above) doesn't help here.
-- **Scales with the analog gain, not ADC-independent.** The elevated
-  amp/unamp readings track each other at roughly the amplifier's own gain
-  (133.8/15.5 ≈ 8.6, 159.6/17.9 ≈ 8.9, vs. the front-end's ~10x amplified
-  line) — both channels are seeing the *same* interference, amplified
-  proportionally by whatever stage each line passes through. If this were
-  an ADC-sampling or firmware-timing artifact (e.g. the WiFi stack stealing
-  CPU cycles mid-sample-loop), it wouldn't track the analog gain like that.
-  This points to the noise entering the analog signal itself — RF pickup
-  or power-supply noise coupling into the front-end — rather than a
-  software/ADC-domain problem, which means firmware timing tricks (e.g.
-  trying to avoid sampling during WiFi transmit bursts) are unlikely to
-  fix it, since the interference isn't tied to the CPU's sampling loop.
+- **Both channels are elevated together (hypothesis, not confirmed).** The
+  amp/unamp readings in the examples above are in a ratio of roughly 8.5-8.9
+  (133.8/15.5 ≈ 8.6, 159.6/17.9 ≈ 8.9). That is in the neighborhood of the
+  amplifier gain but is not equal to it: in the calibration data the
+  amp/unamp RMS ratio for real, unsaturated loads is ~11.1 (nominal gain is
+  10.1), so the noise is *not* scaling exactly like the signal. One reading
+  is that part of the noise enters on the analog signal before the gain
+  stage (RF pickup or supply noise) and part is added after it or at the
+  ADC; another is that the ratio simply isn't informative at these low
+  levels. If it were purely an ADC-sampling or firmware-timing artifact it
+  would not be expected to elevate both channels together, which weakly
+  favors an analog-side cause, but **this needs the scope measurements in
+  `Test_plan.md` to settle** — don't treat it as established.
 
 **Fix applied:** raised `NOISE_FLOOR_AMP_ADC` from 20 to 200 (~0.28A /
 ~70W at no-load voltage) — comfortably above the observed noise ceiling
@@ -186,6 +187,15 @@ A few things ruled out simpler explanations:
 a fabricated small wattage. This means **the device currently cannot
 reliably report any load under ~70W**; real loads in that range will read
 as 0.
+
+**Update 2026-11-03 — worse farther from the router.** After moving the
+device to a location farther from the WiFi router, the no-load reading rose
+to as much as ~200W and hovers around ~150W consistently. The 200-count
+floor above (~70W) no longer covers that, and has **not** been changed
+yet — more data is being collected first. One thing to test is whether
+placing a hotspot right next to the device lowers the floor again (see
+`Test_plan.md`). Also recorded from memory, not re-measured: the noise seen
+on the low-signal and high-signal ADC lines was a similar amount.
 
 **Future improvement (not implemented):** increasing the amplified
 channel's gain beyond the current ~10x would improve signal-to-noise for
@@ -204,13 +214,15 @@ distinguished:**
   coupling directly into nearby analog traces/wires, independent of the
   power rail entirely.
 
-Both would produce the same observed signature (noise scaling with the
-analog gain), so the sample data alone doesn't distinguish them. A cheap
-diagnostic that would: run the board off a completely different, isolated
-power source (battery bank, or a USB brick on a different circuit than
-whatever's already suspected of being noisy) and see if the noise floor
-changes. A significant drop points to the supply-rail hypothesis; no change
-points toward RF.
+Both would produce a similar signature (noise on both channels), so the
+sample data alone doesn't distinguish them.
+
+**Result of the power-supply test:** the board was run from different power
+supplies and the WiFi noise did not change. That counts against noise
+arriving through the external supply. It doesn't fully rule out the first
+mechanism above, because the radio's current bursts still happen on the
+board itself regardless of which supply feeds it. The next step is probing
+the analog lines with WiFi on vs. off (`Test_plan.md`, section 2).
 
 **Candidate fixes, cheapest first:**
 
@@ -218,7 +230,8 @@ points toward RF.
    bulk capacitance (100-470uF) near the ESP32's supply pins, and/or a
    dedicated/isolated regulator feeding just the analog section's Vref and
    op-amps, separate from whatever feeds the ESP32 digital core and radio.
-   Cheapest option if the diagnostic above points this way.
+   Cheapest option, but less likely to help now that changing the external
+   supply made no difference.
 2. **Shielding/layout changes** (if it's RF coupling): physically
    separating or shielding the antenna/RF section from the analog CT and
    op-amp circuitry on the current board.
@@ -232,7 +245,7 @@ points toward RF.
    tradeoff is it's a meaningfully bigger change (two boards, a UART link,
    two power supplies, splitting the firmware into a producer/consumer
    pair) than either of the two options above, so worth trying only if the
-   simpler fixes don't pan out, or if the diagnostic above is inconclusive.
+   simpler fixes don't pan out or the probing results are inconclusive.
 
 ### Retrospective: is the amplified channel actually still needed?
 

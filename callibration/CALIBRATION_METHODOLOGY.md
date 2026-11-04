@@ -117,12 +117,44 @@ their degree-1/2 fit curves, amplified data clipped to <=4A) is written to
 `output/calibration_plot.png`. Both are regenerated fresh — in full — every
 time the script runs; nothing is appended or merged across runs.
 
+## Accuracy analysis (`accuracy_analysis.py`)
+
+The calibration measurements are also used to state how accurate the
+resulting amps readings are. The circuit and the raw ADC readings are the
+same ones the curves were fit to, so the firmware's own equations (hard-coded
+in the script, copied from `src/calibration.cpp` — keep them in sync) are
+applied to each stored `unamp_adc_rms` / `amp_adc_rms` pair and compared with
+the reference current (`avg_amps`).
+
+- **Pipeline:** the same logic as `calculateAmps()` — noise floor, unamplified
+  curve, and the blend with the amplified curve below 4A. The noise floor is
+  set to 20 (the quiet-bench value) because this data was taken with WiFi off.
+- **In-sample error:** percent error of that pipeline on the same points it
+  was fit to.
+- **Leave-one-out error:** each point is dropped in turn, both degree-2 curves
+  are refit without it, and that point is predicted. This still uses only the
+  calibration data but is less flattering than in-sample, since each point
+  wasn't part of the fit that predicts it. Both numbers are printed.
+- **Reference-meter disagreement:** the Kill-A-Watt and the second meter are
+  compared point by point. Any accuracy figure can't be tighter than the
+  reference it is measured against.
+- **Range:** summaries cover points with reference >= 0.5A (that threshold is
+  a choice, set by `MIN_AMPS` in the script), plus a separate >= 5A line.
+  Individual percent errors below 0.5A are listed but large, because the
+  reference is small and the two meters disagree most there. The script also
+  reports the gap in the data (currently 0.96A to 6.67A), where accuracy has
+  not been measured.
+
+Output is written to `output/accuracy_results.txt`.
+
 ## Re-running
 
 ```
 cd callibration
 python3 fit_calibration.py
+python3 accuracy_analysis.py
 ```
 
-Requires `pandas`, `numpy`, and `matplotlib`. Reads `measurments.csv` from
-the current directory; writes into `./output/`.
+Requires `pandas`, `numpy`, and `matplotlib` (the accuracy script needs only
+`numpy`). Reads `measurments.csv` from the current directory; writes into
+`./output/`.
