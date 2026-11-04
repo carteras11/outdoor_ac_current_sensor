@@ -1,0 +1,22 @@
+load_type,unamp_adc_rms,amp_adc_rms,avg_amps,fw_reading_old_fit,notes
+unspecified,9.1,16.2,0.0,0.0,baseline: no load (excluded from fits)
+unspecified,10.1,54.8,0.074,0.064,
+unspecified,15.8,174,0.24,0.248,
+unspecified,37.3,418,0.65,0.606,
+unspecified,49,548,0.79,0.788,
+unspecified,67.4,756,1.07,,added later the same day
+unspecified,75,850,1.26,,added later the same day
+unspecified,87.7,999,1.48,,added later the same day
+unspecified,145,1535,2.77,2.06,
+unspecified,156,1611,2.90,2.19,
+unspecified,183,1693,3.34,2.49,
+unspecified,197,1740,3.53,2.69,
+unspecified,290,1893,5.2,4.23,
+unspecified,304,1900,5.42,4.43,
+unspecified,329,1912,5.77,4.79,
+unspecified,344,1915,5.98,5.00,
+unspecified,471,1890,6.69,6.77,
+unspecified,514,1904,7.27,7.36,
+unspecified,633,1938,9.1,8.98,
+unspecified,814,1941,11.44,11.39,
+unspecified,800,1954,11.65,11.20,

@@ -247,6 +247,25 @@ that error's source or magnitude was.
   gain stage: `Vout = Vref + (Vin - Vref) * gain` — only the AC swing is multiplied.
 - Output (pin 7) = **amplified line**, feeds ADC2
 
+**Measured behavior (November 2026, from the calibration data):**
+- **Actual gain is about 11.1x**, not the nominal 10.1x: amplified RMS divided by
+  unamplified RMS is 11.1–11.4 for every point up to 1.48A. (A gain this far above
+  nominal is plausible from resistor tolerance on the 1k and 9.1k parts — not checked.)
+  The calibration absorbs this.
+- **It is verified linear up to 1.48A and clips well before the loads it was meant to
+  hand off at** (nothing was measured between 1.48A and 2.77A). The ratio falls to 10.6 at 2.77A, 8.8 at 3.53A and 5.6 at 5.98A, and the
+  amplified RMS stops rising near ~1900–1950 counts for anything above ~5A. Rough
+  consistency check (an estimate, not a measurement): an unamplified RMS of ~120 counts
+  times 11.1 is ~1330 counts RMS, a sine peak of ~1880 counts ≈ 1.5V at the ADC pin ≈
+  2.3V at the op-amp output — i.e. within about 0.2V of the 0V/5V rails around Vref
+  = 2.5V, where a TL272 can no longer swing further. That is about 1.7–2A of load, which
+  fits the data.
+- So the amplified line is only usable for roughly the lowest 1.5–2A (the firmware's current
+  calibration keeps it for that range and uses the unamplified line above it). The earlier
+  assumption that it could be used up to 4A (and saturated around 6A) was wrong.
+- The data behind this is in `callibration/output/refit_results.txt` (section C) and
+  `callibration/output/refit_plot.png`.
+
 ## Stage 8 — ADC-side scaling (both lines)
 
 The analog stages run from a 5V rail and swing around Vref = 2.5V, but the ESP32 ADC

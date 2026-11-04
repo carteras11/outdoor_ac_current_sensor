@@ -57,25 +57,45 @@ git switch main                 # come back afterward
 
 ## 1. Calibration accuracy
 
-**Main accuracy figure:** computed from the calibration measurements
-(`measurments.csv`) with `callibration/accuracy_analysis.py` — the firmware's
-own equations applied to the stored raw ADC readings and compared with the
-reference current. Same circuit, same readings. Results are in
-`callibration/output/accuracy_results.txt`; method in
-`callibration/CALIBRATION_METHODOLOGY.md` ("Accuracy analysis").
+**Done (2026-11-03):** 20 new WiFi-off measurements were taken, including 11
+between 1.07A and 5.98A (`callibration/measurments_2026-11.csv`), plus 7 loads
+read with WiFi on (`callibration/wifi_on_observations_2026-11.csv`). They
+showed the firmware's current equations read 16–26% low between 2.8A and 6A
+(and the original data agrees with the new data where they overlap). A new
+model that keeps both channels was fit from them. Results and analysis: `callibration/output/refit_results.txt` and
+`callibration/CALIBRATION_METHODOLOGY.md` ("November 2026 re-fit").
 
-**Mid-range spot check (still to do):** the calibration data has no points
-between ~1A and ~6.7A, so measure one load at roughly **1.3A** with WiFi off
-(firmware `ba1514c`, see above) and compare the firmware's calculated amps
-(serial output) with the reference meter(s). Compare **amps only** — the power
-estimate is tuned for the 240V circuit. Record the raw `Unamp RMS` and `Amp RMS`
-too, and which meters were used. Don't refit the curves with this point;
-it is a check, not more calibration data.
+An accuracy figure computed from the *September* data alone
+(`callibration/accuracy_analysis.py`) does not cover 1–6.5A and shouldn't be
+quoted as the overall accuracy.
 
-WiFi-on testing (sections 2-3 below) is about noise, not accuracy, so it
-doesn't need accuracy checks.
+**Still to do:**
+- **Record the load type for every calibration point** (the `load_type`
+  column in `measurments_2026-11.csv` is currently "unspecified").
+- **Purely resistive loads between 1.5A and 6.5A** (in the 3–5A range
+  especially), WiFi off, with their load type recorded. This is the test that shows whether the 2.8–6A discrepancy
+  follows the load type or the current level.
+- **A load near 2A.** There are still no points between 1.48A and 2.77A,
+  which is exactly where the amplified channel stops being linear, so the
+  amplified/unamplified fade zone (about 1.5–2.1A) is unvalidated.
+- A **held-out set** (loads not used in fitting) once a new calibration is
+  chosen, so the accuracy figure comes from data the fit hasn't seen. Compare
+  **amps only** — the power estimate is tuned for the 240V circuit. Use WiFi
+  off (firmware `ba1514c`, see above).
+
+WiFi-on testing (sections 2-3 below) is about noise, not accuracy.
 
 ## 2. Localizing the WiFi noise (scope)
+
+**Done (2026-11-03):** first scope captures with WiFi on vs. off — the 5V
+line dips to about 4.8–4.9V in spikes ~5 times a second, and both signal
+lines show large spikes at the same rate (amplified line 3.1V peak-to-peak,
+vs. a clean 60 Hz waveform with WiFi off). Numbers are in
+`firmware_state_adc_calibration.md` ("Scope captures"). Not yet done: probing
+the Vref node, the 3.3V rail, and the earlier stages (input tap, integrator
+output), the substitution test below, and checking the router's DTIM setting
+(a possible source of the ~5 Hz rate). The saved captures (`scope captures/`)
+have only been summarized; analyze them in more depth later if needed.
 
 Goal: find whether the noise is present in the analog signal path, or only in
 the ADC readings.

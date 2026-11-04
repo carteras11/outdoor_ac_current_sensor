@@ -8,6 +8,17 @@ converts both lines' ADC RMS into a calibrated amps value on-device
 (`src/power.cpp`), prints all of it over serial every second for live
 debugging, and separately publishes power over MQTT every 5 seconds.
 
+> **Calibration status (2026-11-03):** `src/calibration.cpp` now uses a
+> model fit to the September and November measurements that keeps both
+> channels (an amplified-channel curve below ~1.5A, the unamplified curve above
+> ~2.1A, fading between). Its leave-one-out error over all points is mean
+> 4.5% / worst case 9.9%; the earlier September equations read **16–26% low
+> between about 2.8A and 6A**. It has been checked against the Python fit
+> and builds, but has **not yet been run on the device**. WiFi noise still
+> adds roughly +0.4A at low current. Details:
+> [callibration/CALIBRATION_METHODOLOGY.md](callibration/CALIBRATION_METHODOLOGY.md)
+> ("November 2026 re-fit").
+
 ## What this build does
 
 - Connects to WiFi and the MQTT broker (`src/mqtt_handler.cpp/h`,
@@ -57,6 +68,112 @@ debugging, and separately publishes power over MQTT every 5 seconds.
   input. Current divider: two 1k resistors in parallel (500 ohm) on top, one
   1k on bottom, giving a ratio of 1000/(1000+500) = 0.667, so a 5V worst-case
   swing becomes ~3.33V at the ADC pin, and the 2.5V DC bias becomes ~1.65V.
+
+## Data path in detail: how the firmware gets, stores, samples, computes, and reports
+
+**1. Input and ADC setup** (`initCurrentSensor()` in `rms_current.cpp`)
+- Two ADC1 pins (GPIO34 unamplified, GPIO35 amplified) set as inputs, with
+  `analogSetAttenuation(ADC_11db)` (about 0–3.3V input range) and
+  `analogReadResolution(12)` (counts 0–4095).
+- Raw ADC counts are used directly: there is no per-chip ADC calibration
+  (`esp_adc_cal`) or linearization. The ESP32 ADC is known to be non-linear
+  near both ends of its range; the signals here are centered near mid-scale
+  (~1.65V), where it behaves best, and the polynomial calibration absorbs
+  whatever non-linearity remains in the range that was measured.
+- Two buffers of `CURRENT_SAMPLES` (1500) `int`s are allocated once on the
+  heap at startup (about 12 kB total) and reused for every reading. Raw
+  samples are overwritten by the next reading; only the computed RMS values
+  are kept.
+
+**2. Sampling** (`measureCurrent()`)
+- One *reading*: a loop of 1500 iterations, each doing
+  `analogRead(unamp pin)` then `analogRead(amp pin)` and storing both
+  results. The calls block until each conversion finishes; there are no
+  delays, timers, interrupts, or DMA. The two samples in a pair are taken
+  ~120 µs apart (about 2.6° of a 60 Hz cycle), which doesn't matter because
+  each line's RMS is computed separately.
+- One *measurement* = 3 readings. Each line's result is the plain average of
+  its 3 buffer RMS values (`CURRENT_READINGS_PER_MEASUREMENT`).
+- The time of each reading is measured with `micros()`, and
+  `sample_rate_hz = 1500 / duration` is averaged over the 3 readings and
+  printed. This is the sampling rate **per line** (each line gets 1500
+  samples per reading; the ADC does twice as many conversions per second in
+  total).
+
+**3. RMS of each buffer** (`calculateRMS()`): mean of the buffer (integer sum
+divided by count), then `sqrt(mean of squared deviations from that mean)`,
+in `float`. The result is the **AC RMS in ADC counts** — the DC bias is
+removed by subtracting the buffer's own mean.
+
+**4. Timing of the main loop** (`main.cpp`)
+- `loop()` first services MQTT, then starts a new measurement whenever at
+  least 1000 ms have passed since the last one *started*. A measurement
+  itself takes about 1.1 s (3 readings × 1500 iterations × ~240 µs ≈ 1.08 s,
+  plus the RMS math), so the next one starts as soon as the previous one
+  ends. Sampling is effectively continuous, and the "1s" label in the serial
+  output is nominal: each "1s" value is ~1.1 s of data, produced every
+  ~1.1 s. The "5s" value is the last 5 measurements, about 5.5 s.
+- The MQTT client's `loop()` (keepalive, incoming messages) only runs
+  between measurements, roughly once per 1.1 s. That is fine for the 60 s
+  keepalive that is configured.
+
+**5. Rolling window** (see the 5-second window section below): a 5-slot ring
+of mean-squares per line; until 5 measurements exist, the average uses
+however many there are.
+
+**6. Conversion**: `calculateAmps()` is called once on the latest
+measurement and once on the 5-measurement window; voltage and power are
+derived from the 5-measurement amps only.
+
+**7. Reporting**
+- **Serial (115200 baud)**, after every measurement: a `1s` line (raw unamp
+  RMS, raw amp RMS, amps), a `5s` line (the same plus voltage and power), and
+  the sample rate.
+- **MQTT**: `publishPower(power_5s)` publishes the 5-measurement power to
+  `hvac/outdoor/power` (`MQTT_TOPIC_POWER`) as plain text watts with one
+  decimal (`"%.1f"`). The 5000 ms timer is only checked once per
+  measurement, so in practice a publish happens about every 5.5 s. It uses
+  PubSubClient's defaults (QoS 0, not retained) and is silently skipped if
+  the client isn't connected. Only power is published — not amps, voltage, or
+  the raw RMS values. The client also subscribes to `hvac/led` (`ON`/`OFF`
+  drives the LED on GPIO2) and `hvac/command` (no handler exists for it).
+  Reconnect attempts happen every 5 s (`MQTT_RECONNECT_INTERVAL`).
+- **Startup**: `setup()` blocks until WiFi connects (retrying every 15 s), so
+  the device does not start measuring at all while WiFi is unavailable.
+
+### Why the sample rate is the same every time (about 4166 Hz)
+
+It is not a bug, and it is not a configured rate — nothing in the firmware
+sets one.
+
+- `analogRead()` here (arduino-esp32 2.0.17) is a blocking call that
+  triggers one ADC1 conversion and waits for the result. Its duration is set
+  by the ADC hardware plus the driver's fixed overhead — about 120 µs per
+  call on this board. Two calls per iteration is ~240 µs, and 1 / 240 µs ≈
+  4167 Hz. Because the loop contains nothing else that varies (no delays, no
+  waiting on other tasks), every iteration takes the same time, so the
+  measured rate comes out the same every time.
+- It is deterministic, not *controlled*: no timer or DMA keeps the samples
+  evenly spaced, so small jitter is possible but isn't visible at this
+  resolution.
+- Likely reason WiFi activity doesn't change it: Arduino's `loop()` runs on
+  core 1 and the WiFi stack mostly runs on core 0. (Plausible, not verified
+  by tracing.)
+- **Unexplained difference:** on 2026-09-14 the same sampling code printed
+  about **5917 Hz**. The toolchain has not changed since December 2025 and
+  the config values are the same, so the repo doesn't explain it. If a
+  different ESP32 board is being used now, that is one candidate; this was
+  not investigated.
+
+**What the rate implies:**
+- A reading is 1500 samples ÷ 4166 Hz ≈ **0.36 s**, about **21.6 cycles** of
+  60 Hz — not a whole number of cycles. For a pure sine that leaves an RMS
+  error of up to about 0.2% per reading (my estimate, not measured), reduced
+  further by averaging 3 readings and the rolling window.
+- About **69 samples per 60 Hz cycle**, so frequencies up to ~2.08 kHz
+  (Nyquist) are represented; anything faster aliases into the readings.
+  This matters for noise: very short spikes are only caught if a sample
+  happens to land on them.
 
 ## How the RMS calculation works (`rms_current.cpp`)
 
@@ -119,36 +236,57 @@ ones. Worth keeping in mind if this code gets restructured later.
 readings into one amps value:
 
 1. **Noise floor.** If `amp_adc_rms <= 200.0`, return `0.0` immediately —
-   no polynomial is evaluated. The amplified line is used for this check
-   (not unamplified) because it's the more sensitive of the two at small
-   currents — it moves more per amp near zero, so it separates "no load"
-   from "a little load" more clearly. This threshold corresponds to
-   ~0.28A / ~70W and is set much higher than the bench no-load baseline
-   (unamp=6.4, amp=10) because of real on-device noise — see "Noise floor /
-   WiFi interference" below.
-2. **Unamplified estimate.** Otherwise, run `unamp_adc_rms` through a
-   degree-2 polynomial fit across the full measured current range.
-3. **Above ~4A:** the unamplified estimate is returned as-is. The amplified
-   line is never evaluated up here — it saturates around 6A and its
-   calibration fit only used measurements up to 4A, so it has no basis
-   beyond that.
-4. **Below ~4A:** `amp_adc_rms` is also run through its own degree-2
-   polynomial fit (fit only on the <=4A data), and the two estimates are
-   blended with a piecewise-linear weight on the amplified channel: 1.0 at
-   0A, 0.75 at 1A, 0.50 at 2A, 0.0 at 4A. The weight is keyed off the
-   *unamplified* estimate from step 2, since that's the only current-like
-   signal available at runtime — the firmware has no independent "true
-   current" to drive the blend with.
+   no curve is evaluated. The amplified line is used for this check (not
+   unamplified) because it's the more sensitive of the two at small
+   currents. This threshold corresponds to ~0.28A / ~70W and is set much
+   higher than the bench no-load baseline (unamp=6.4, amp=10) because of
+   real on-device noise — see "Noise floor / WiFi interference" below.
+2. **Pick the weight from the amplified channel's own RMS.** At or below
+   1000 counts (about 1.5A) the weight on the amplified curve is 1; between
+   1000 and 1400 counts (about 1.5–2.1A) it falls linearly to 0; at or above
+   1400 counts it is 0. Using the amplified RMS directly (rather than an
+   estimate of the current) ties the switch to what actually limits that
+   channel: it clips.
+3. **Amplified curve** (`amps = 0.00148822 * amp_rms - 0.0138492`), a
+   straight line fit on the points up to 1.5A where the channel is linear.
+4. **Unamplified curve**
+   (`4.71728e-09*u^3 - 1.03711e-05*u^2 + 0.0193302*u - 0.0887038`), a cubic
+   fit over all points and weighted to minimize percent error, so it also
+   covers the fade zone and everything above it.
+5. The result is `weight * amplified + (1 - weight) * unamplified`, floored
+   at 0. Each curve is only evaluated when its weight is non-zero.
 
-The coefficients and this weighting scheme came from fitting
-`callibration/measurments.csv` — see
+The curves and crossover came from `callibration/refit_analysis.py`
+(section H) fit on `callibration/measurments.csv` (September) plus
+`callibration/measurments_2026-11.csv` — see
 [callibration/CALIBRATION_METHODOLOGY.md](callibration/CALIBRATION_METHODOLOGY.md)
-for how they were derived, and `callibration/output/calibration_results.txt`
-for the exact fit run they were taken from. Notably, the calibration data
-has **no measurements between ~1A and ~6.7A**, so the 1A/2A/4A blend
-anchors themselves are extrapolated, not validated against real
-measurements in that range — worth re-checking if more calibration data
-gets collected there.
+("November 2026 re-fit") and `callibration/output/refit_results.txt`. The
+C++ was checked against the Python model (identical estimates at the test
+points, e.g. 1.4729A at unamp 87.7 / amp 999).
+
+**History — the September calibration this replaced** (from
+`callibration/measurments.csv`, which had **no measurements between ~1A and
+~6.7A**): degree-2 curves for both channels, with a blend keyed off an
+unamplified-derived amps estimate (amplified weight 1.0 at 0A, 0.75 at 1A,
+0.5 at 2A, 0 at 4A). The November measurements showed it:
+- read **16–26% low for loads between 2.8A and 6A** (about 1–4% off at 6.5A
+  and above, within 7% at 0.65–1.1A) — it was wrong in the range it had no
+  data for;
+- assumed the amplified channel was usable to 4A, but it is verified linear
+  only up to 1.48A and is compressed by 2.77A (nothing was measured in
+  between).
+
+**What is still not right with the new model:**
+- The points between 2.8A and 6A do not lie on the same curve as the points
+  at 6.7A and above (they need ~25% more amps per ADC count) and no polynomial
+  fits both groups well; the cause is undetermined. In the new model, points
+  at 5–6A read about 8% low and points at 6.5–7.4A about 7–8% high.
+- Leave-one-out error over 42 points is mean 4.5% / worst case 9.9% (the
+  September equations on the same points: mean 6.7% / worst case 25.7%), but
+  it is less accurate above 6.5A than the September fit (mean about 1% →
+  3–4%).
+- The fade zone (1000–1400 counts) is unvalidated: no point was measured
+  between 1.48A and 2.77A.
 
 ### Noise floor / WiFi interference
 
@@ -221,31 +359,77 @@ sample data alone doesn't distinguish them.
 supplies and the WiFi noise did not change. That counts against noise
 arriving through the external supply. It doesn't fully rule out the first
 mechanism above, because the radio's current bursts still happen on the
-board itself regardless of which supply feeds it. The next step is probing
-the analog lines with WiFi on vs. off (`Test_plan.md`, section 2).
+board itself regardless of which supply feeds it.
 
-**Candidate fixes, cheapest first:**
+### Scope captures (2026-11-03)
 
-1. **Better decoupling on the current board** (if it's supply-rail noise):
-   bulk capacitance (100-470uF) near the ESP32's supply pins, and/or a
-   dedicated/isolated regulator feeding just the analog section's Vref and
-   op-amps, separate from whatever feeds the ESP32 digital core and radio.
-   Cheapest option, but less likely to help now that changing the external
-   supply made no difference.
-2. **Shielding/layout changes** (if it's RF coupling): physically
-   separating or shielding the antenna/RF section from the analog CT and
-   op-amp circuitry on the current board.
-3. **Split the WiFi radio onto a second ESP32.** Sense/compute on the
-   current board as today, but instead of that board handling WiFi/MQTT
-   itself, have it send the computed power payload over UART to a second
-   ESP32 (on its own, separate power supply) that owns the WiFi connection
-   and does the MQTT publish. This addresses *both* candidate mechanisms
-   at once (no shared supply, and physical distance from the antenna),
-   without needing to first diagnose which one is the actual cause -- the
-   tradeoff is it's a meaningfully bigger change (two boards, a UART link,
-   two power supplies, splitting the firmware into a producer/consumer
-   pair) than either of the two options above, so worth trying only if the
-   simpler fixes don't pan out or the probing results are inconclusive.
+Summary of what was observed (captures are in `scope captures/`; they have
+only been summarized, not analyzed in depth):
+
+- **WiFi off:** the 5V rail is quiet, and a ~0.6A load gives a clean 60 Hz
+  waveform on both lines (amplified 337 mV rms / 1.42 V peak-to-peak;
+  unamplified 30 mV rms / 132 mV peak-to-peak).
+- **WiFi on:** the 5V rail has sharp dips to about 4.8-4.85V roughly 5 times
+  per second (a 10 uF capacitor on the line did not help), and both signal
+  lines show large spikes at the same rate. No load: amplified 437 mV rms /
+  3.1 V peak-to-peak (the full swing), unamplified 46 mV rms / 423 mV
+  peak-to-peak. At ~0.6A: amplified 0.68 V rms / 3.1 V peak-to-peak,
+  unamplified 52 mV rms / 445 mV peak-to-peak. The noise is as large as or
+  larger than the 0.6A signal.
+- The probe was on the ADC-pin side of the lines (average level ~1.66V).
+
+**Why ~5 Hz? (a guess, not confirmed):** WiFi power save. A sleeping ESP32
+wakes up for the access point's DTIM beacons. Beacons normally go out every
+102.4 ms, so a DTIM interval of 2 gives a wake-up every 204.8 ms, about
+4.9 Hz — close to the ~0.2 s spacing between the dips on the 5V rail. Each
+wake-up powers up the radio, which draws a burst of current. The MQTT publish
+(every ~5.5 s) is far too slow to be the source. To check: the router's DTIM
+setting, and `WiFi.setSleep(false)`.
+
+Dips on the 5V rail and spikes on the signal lines at the same moments fit a
+supply-droop explanation (Vref is made from a divider off the 5V rail), but
+that is unconfirmed.
+
+**Later, if needed:** analyze the scope captures in more depth (timing and
+width of each event, probing Vref and the 3.3V rail). Note the WiFi-on
+captures were 8000 samples at 1.6 kHz over about 5 s, so very short spikes
+may be under-represented.
+
+### Potential solutions (none implemented or tested)
+
+*Power/analog hardware:*
+1. **Much larger bulk capacitance on the 5V line** near the ESP32 (for
+   example 100–470µF low-ESR, plus 0.1µF ceramics). 10µF was not enough.
+2. **A separate regulated supply for the analog section** (an LDO behind a
+   ferrite bead or RC filter) so the ESP32's current bursts can't move the
+   analog rail; star-ground the analog return.
+3. **Make Vref immune to rail dips:** more capacitance and filtering on the
+   Vref node, or derive Vref from a regulated reference instead of a plain
+   divider off the unregulated 5V.
+4. **Local decoupling at each TL272** (0.1µF plus ~10µF at the supply pins).
+5. **Physical separation/shielding** of the ESP32 antenna from the analog
+   wiring, with short or shielded analog input leads.
+6. **Split the WiFi radio onto a second ESP32** on its own supply, sending
+   the computed power over UART. This addresses supply coupling and
+   antenna proximity at once, but is a bigger change (two boards, a UART
+   link, splitting the firmware into a producer and consumer).
+
+*Firmware:*
+7. **Robust RMS:** compute RMS over short sub-windows (for example one 60 Hz
+   cycle each) and take the median rather than the mean over the whole
+   buffer, so a burst that only corrupts a few sub-windows is rejected. This
+   only works if the bursts are short compared with the gaps between them;
+   their duration hasn't been measured.
+8. **Keep the radio quiet while sampling:** sample with WiFi off and switch it
+   on briefly to publish. This costs reconnect time on every cycle and is
+   awkward with a 5 s publish interval.
+9. **WiFi settings:** lower `WiFi.setTxPower()`, `WiFi.setSleep(false)`, and
+   the router's DTIM interval can change the burst pattern; test each, since
+   none is guaranteed to help (disabling sleep could make it worse).
+
+**Raised noise floor as a stopgap:** the current mitigation is only the
+threshold in `calculateAmps()`; it hides the noise below ~70W (and it is
+already too low for the ~150–200W seen at the farther location).
 
 ### Retrospective: is the amplified channel actually still needed?
 
@@ -261,6 +445,14 @@ measurable differences at low current, so the amplified line isn't
 *useless*, but whether it's worth the extra hardware (second ADC line, gain
 stage) and firmware complexity (a second calibration curve, blend logic)
 is worth revisiting now that the unamplified signal alone is this good.
+
+November measurements strengthen that question: with a measured gain of
+~11.1x, the amplified line clips well before the loads it was meant to hand
+off at. It is verified linear up to about 1.5A and is already compressed at
+2.8A, so it is only useful for roughly the bottom 1.5–2A of the range — which
+is also where the WiFi noise floor (see below) dominates. The current
+calibration keeps it for exactly that range (see above), with the
+unamplified channel taking over above it.
 
 ## Voltage sag / power estimate (`src/power.cpp`)
 
@@ -374,10 +566,50 @@ the fix or something environmental (router, signal) resolved it isn't
 fully confirmed, but the improved diagnostics are worth keeping either way
 in case a similar issue recurs.
 
-## Next steps
+## Improvements and next steps
 
-See [Project_plan.md](Project_plan.md) for the full roadmap. MQTT
-publishing is now live (see above). Immediately next: verify the published
-`MQTT_TOPIC_POWER` values against a Home Assistant/MQTT client, then
-collect more voltage-sag data points to firm up the current single-point
-fit.
+See [Project_plan.md](Project_plan.md) for the roadmap. The ideas below are
+collected here with the firmware context; none are implemented.
+
+**Calibration (highest priority, see `callibration/CALIBRATION_METHODOLOGY.md`)**
+- Run the new calibration on the device and compare its readings with the
+  reference meters.
+- Record the load type for every calibration point, and measure resistive
+  loads between 1.5A and 6.5A to find out whether the mid-range discrepancy
+  depends on the load. Also measure a load near 2A to validate the amplified
+  channel's fade zone.
+- Use a held-out set of measurements (not used in fitting) to state accuracy.
+
+**Sampling and RMS**
+- Sample on a timer or with DMA (for example the ESP32's continuous ADC
+  mode) so the sample rate is fixed and chosen, not whatever `analogRead`
+  happens to take.
+- Choose the window to be a whole number of 60 Hz cycles (or synchronize to
+  a zero crossing) to remove the partial-cycle error.
+- Use the ESP32's ADC calibration to correct its non-linearity, or an
+  external ADC.
+- Robust RMS (median over sub-windows) to reject WiFi bursts — see the
+  noise section.
+
+**Power measurement**
+- Measure line voltage and the voltage–current phase to report real power
+  (the current estimate is closer to apparent power: the firmware multiplies
+  amps by a modeled voltage and ignores the power factor).
+- Collect more voltage-sag points to replace the single-point
+  `VOLTAGE_SAG_PER_AMP` fit.
+
+**Noise and hardware**
+- See "Potential solutions" in the noise section (bulk capacitance, a
+  separate analog supply, a more robust Vref, a second ESP32 for WiFi).
+- Decide whether to keep the amplified channel, or give it more gain and
+  restrict it to the lowest ~1.5A.
+
+**Firmware robustness**
+- Don't block `setup()` forever waiting for WiFi, so measurement can start
+  without a network.
+- MQTT: publish amps and voltage as well as power, consider retained messages
+  and a last-will message so Home Assistant can tell when the device is
+  offline.
+- Keep credentials and tuned constants in a version-controlled template
+  (`config.h` is gitignored, so the tuned voltage-sag values are not in
+  version control).

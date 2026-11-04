@@ -1,0 +1,218 @@
+November 2026 re-fit analysis
+  original data: 22 points (measurments.csv, excluding its no-load row)
+  new data:      20 points (measurments_2026-11.csv, excluding its 0 A baseline row; no other points removed)
+  error = (estimate - reference) / reference; summaries cover reference >= 0.5 A
+
+A. The original (September) calibration, as currently in the firmware, applied to the new WiFi-off data
+     ref A   reads    err%   unamp    amp
+     0.074   0.064   -13.8    10.1     55
+     0.240   0.248     3.2    15.8    174
+     0.650   0.606    -6.8    37.3    418
+     0.790   0.786    -0.6    49.0    548
+     1.070   1.059    -1.0    67.4    756
+     1.260   1.175    -6.8    75.0    850
+     1.480   1.355    -8.4    87.7    999
+     2.770   2.057   -25.7   145.0   1535
+     2.900   2.187   -24.6   156.0   1611
+     3.340   2.501   -25.1   183.0   1693
+     3.530   2.688   -23.8   197.0   1740
+     5.200   4.228   -18.7   290.0   1893
+     5.420   4.427   -18.3   304.0   1900
+     5.770   4.782   -17.1   329.0   1912
+     5.980   4.995   -16.5   344.0   1915
+     6.690   6.771     1.2   471.0   1890
+     7.270   7.364     1.3   514.0   1904
+     9.100   8.983    -1.3   633.0   1938
+    11.440  11.380    -0.5   814.0   1941
+    11.650  11.197    -3.9   800.0   1954
+  summary:
+    < 1 A     n= 2  mean|err|=  3.7%  max|err|=  6.8%
+    1-6.5 A   n=11  mean|err|= 16.9%  max|err|= 25.7%
+    >= 6.5 A  n= 5  mean|err|=  1.6%  max|err|=  3.9%
+    all >= 0.5 A n=18  mean|err|= 11.2%  max|err|= 25.7%
+
+B. WiFi-on observations (amps readings only) vs. the nearest WiFi-off point, both with the original fit
+     ref A  WiFi-on reads    err%   nearest WiFi-off:  ref A   reads    err%
+     0.613          1.050    71.3                      0.65   0.606    -6.8
+     2.780          2.200   -20.9                      2.77   2.057   -25.7
+     5.180          4.260   -17.8                      5.20   4.228   -18.7
+     5.810          4.830   -16.9                      5.77   4.782   -17.1
+     6.760          6.870     1.6                      6.69   6.771     1.2
+     7.350          7.450     1.4                      7.27   7.364     1.3
+    11.700         11.300    -3.4                     11.65  11.197    -3.9
+
+C. Amplified-channel linearity: amp/unamp RMS ratio vs. current (about 11.1 while the channel is linear)
+   unamp   37.3  amp   418.0  ratio 11.21  ref  0.65 A
+   unamp   38.8  amp   430.9  ratio 11.11  ref  0.64 A
+   unamp   46.7  amp   519.8  ratio 11.13  ref  0.79 A
+   unamp   49.0  amp   548.0  ratio 11.18  ref  0.79 A
+   unamp   60.8  amp   678.1  ratio 11.15  ref  0.96 A
+   unamp   67.4  amp   756.0  ratio 11.22  ref  1.07 A
+   unamp   75.0  amp   850.0  ratio 11.33  ref  1.26 A
+   unamp   87.7  amp   999.0  ratio 11.39  ref  1.48 A
+   unamp  145.0  amp  1535.0  ratio 10.59  ref  2.77 A   <-- compressed
+   unamp  156.0  amp  1611.0  ratio 10.33  ref  2.90 A   <-- compressed
+   unamp  183.0  amp  1693.0  ratio  9.25  ref  3.34 A   <-- compressed
+   unamp  197.0  amp  1740.0  ratio  8.83  ref  3.53 A   <-- compressed
+   unamp  290.0  amp  1893.0  ratio  6.53  ref  5.20 A   <-- compressed
+   unamp  304.0  amp  1900.0  ratio  6.25  ref  5.42 A   <-- compressed
+   unamp  329.0  amp  1912.0  ratio  5.81  ref  5.77 A   <-- compressed
+   unamp  344.0  amp  1915.0  ratio  5.57  ref  5.98 A   <-- compressed
+
+D. Do the original and new data agree where they overlap? (A per ADC count at nearly the same unamp reading)
+   new unamp  new A/count   old unamp  old A/count   difference
+        37.3      0.01743        38.8      0.01651     +5.6%
+        49.0      0.01612        46.7      0.01687     -4.5%
+        67.4      0.01588        60.8      0.01582     +0.3%
+       471.0      0.01420       472.0      0.01413     +0.5%
+       514.0      0.01414       524.0      0.01409     +0.4%
+       633.0      0.01438       626.0      0.01406     +2.3%
+       800.0      0.01456       825.0      0.01399     +4.1%
+       814.0      0.01405       825.0      0.01399     +0.4%
+   -> 8 overlapping points, mean |difference| 2.2%, max 5.6%
+   Overlap only exists below ~1 A and at 6.5 A and above; the original data has nothing between.
+
+E. A per ADC count (ref / unamp) by current range, new data
+   < 1 A     n= 2  A/count: 0.0161 to 0.0174  (mean 0.0168)
+   1-6.5 A   n=11  A/count: 0.0159 to 0.0191  (mean 0.0176)
+   >= 6.5 A  n= 5  A/count: 0.0141 to 0.0146  (mean 0.0143)
+   Points between 2.8 and 6 A need about 25% more amps per count than the points at 6.7 A and above;
+   see the next section for what that does to any single fitted curve.
+
+F. Unamplified curve alone (full range): degree 1 / 2 / 3, in-sample and leave-one-out (LOO)
+  original + new (n=42)
+    degree 1: in-sample mean   9.2% max  30.8%   LOO mean   9.6% max  32.2%
+    degree 2: in-sample mean   6.2% max  14.6%   LOO mean   6.5% max  15.2%
+    degree 3: in-sample mean   5.1% max  11.7%   LOO mean   5.8% max  14.2%
+  new only (n=20)
+    degree 1: in-sample mean  14.5% max  49.1%   LOO mean  15.8% max  54.3%
+    degree 2: in-sample mean   7.3% max  15.7%   LOO mean   8.4% max  17.9%
+    degree 3: in-sample mean   5.9% max  16.6%   LOO mean   7.0% max  18.5%
+  (the original data alone, for reference: degree 2 max 12.8% / LOO 13.9% from the September run)
+
+   Check on extrapolation: the cubic fit to the new data alone, applied to the original points, has a max error of 53% (the new data stops at 11.65 A; the original reaches 16.65 A).
+
+G. The existing 'DJ mixer' structure refit on original + new data (degree 2 for both curves,
+   unamp curve on all points, amp curve on points <= 4 A, blend weights unchanged)
+   unamp: amps = -2.33528e-06*u^2 + 0.015981*u + 0.0961188
+   amp  : amps = 5.39442e-07*a^2 + 0.000989729*a + 0.0469475   (fit on 22 points)
+  in-sample:
+    < 1 A     n= 5  mean|err|=  5.8%  max|err|= 11.1%
+    1-6.5 A   n=11  mean|err|=  8.2%  max|err|= 12.8%
+    >= 6.5 A  n=16  mean|err|=  2.8%  max|err|=  6.7%
+    all >= 0.5 A n=32  mean|err|=  5.1%  max|err|= 12.8%
+  leave-one-out:
+    < 1 A     n= 5  mean|err|=  6.4%  max|err|= 12.0%
+    1-6.5 A   n=11  mean|err|=  8.7%  max|err|= 13.4%
+    >= 6.5 A  n=16  mean|err|=  3.1%  max|err|=  7.2%
+    all >= 0.5 A n=32  mean|err|=  5.6%  max|err|= 13.4%
+   The amp curve here is fit partly on points where the amplified channel is compressed (section C),
+   so it is asked to map the same amp RMS values (1500-1750) to different currents.
+
+   Per-point, in-sample, for the points at 1 A and above:
+     ref   1.07  reads   1.12  err    4.7%
+     ref   1.26  reads   1.28  err    1.5%
+     ref   1.48  reads   1.54  err    4.0%
+     ref   2.77  reads   2.56  err   -7.7%
+     ref   2.90  reads   2.72  err   -6.2%
+     ref   3.34  reads   3.03  err   -9.3%
+     ref   3.53  reads   3.21  err   -9.2%
+     ref   5.20  reads   4.53  err  -12.8%
+     ref   5.42  reads   4.74  err  -12.6%
+     ref   5.77  reads   5.10  err  -11.6%
+     ref   5.98  reads   5.32  err  -11.1%
+     ref   6.67  reads   7.12  err    6.7%
+     ref   6.69  reads   7.11  err    6.2%
+     ref   7.27  reads   7.69  err    5.8%
+     ref   7.38  reads   7.83  err    6.0%
+     ref   8.26  reads   8.49  err    2.7%
+     ref   8.80  reads   9.19  err    4.4%
+     ref   9.10  reads   9.28  err    1.9%
+     ref  10.80  reads  11.02  err    2.0%
+     ref  11.44  reads  11.56  err    1.0%
+     ref  11.54  reads  11.69  err    1.3%
+     ref  11.65  reads  11.39  err   -2.3%
+     ref  12.32  reads  12.35  err    0.2%
+     ref  12.39  reads  12.49  err    0.8%
+     ref  13.40  reads  13.34  err   -0.4%
+     ref  14.22  reads  14.08  err   -1.0%
+     ref  16.65  reads  16.36  err   -1.7%
+
+H. Crossover model that keeps both channels (original + new data, all points)
+   amp curve: straight line, fit on points <= 1.5 A (where the amplified channel is linear)
+   unamp curve: polynomial fit on all points
+   selection by the amplified channel's own RMS: amp curve alone up to 1000 counts,
+   linear fade to the unamp curve by 1400 counts, unamp curve alone above
+   (no data points fall between 999 and 1535 amp counts, so the fade width cannot be tuned from data)
+
+   Candidates, leave-one-out error, mean/max % (unweighted = least squares in amps; weighted = least
+   squares in percent, with references below 0.5 A treated as 0.5 A):
+   unamp curve                  0.3-1.5 A   1.5-6.5 A     >=6.5 A   all >=0.3
+   degree 1, unweighted         3.1/ 7.0   16.8/18.0    1.5/ 5.3    5.6/18.0
+   degree 1, weighted           3.0/ 7.1   15.9/20.7    9.1/14.9    9.1/20.7
+   degree 2, unweighted         3.1/ 7.0   12.8/15.2    3.1/ 7.2    5.5/15.2
+   degree 2, weighted           3.0/ 7.1    7.9/11.5    5.8/12.6    5.6/12.6
+   degree 3, unweighted         3.1/ 7.0    8.0/ 9.5    4.2/14.2    4.8/14.2
+   degree 3, weighted           3.0/ 7.1    7.9/ 9.9    3.7/ 8.9    4.5/ 9.9
+
+   Chosen: unamp degree 3, percent-weighted; amp straight line
+   unamp: amps = 4.71728e-09*u^3 + -1.03711e-05*u^2 + 0.0193302*u + -0.0887038
+   amp  : amps = 0.00148822*a + -0.0138492
+   unamp curve is increasing everywhere from 0 to 1500 counts (smallest slope 0.0117 A/count); 16.99 A at 1244 counts, 18.71 A at 1350
+
+   Handoff region (a signal with amp RMS about 11.3 x unamp RMS): both curves should agree
+    amp RMS  amp curve  unamp curve
+        800      1.18A        1.23A
+       1000      1.47A        1.54A
+       1200      1.77A        1.85A
+       1400      2.07A        2.16A
+
+   Error of the chosen model by range, mean/max %:
+                                0.3-1.5 A   1.5-6.5 A     >=6.5 A   all >=0.3
+   in-sample                     2.7/ 6.4    7.5/ 9.4    3.2/ 8.3    4.1/ 9.4
+   leave-one-out                 3.0/ 7.1    7.9/ 9.9    3.7/ 8.9    4.5/ 9.9
+   September fit (previous firmware)    3.9/ 8.4   21.2/25.7    1.0/ 3.9    6.7/25.7
+
+   Per point (reference >= 0.3 A), chosen model, in-sample and leave-one-out:
+     ref A  estimate   err%  LOO est   err%   unamp    amp
+     0.332     0.340    2.3    0.340    2.5    22.2    238
+     0.640     0.627   -2.0    0.626   -2.3    38.8    431
+     0.962     0.995    3.5    1.000    4.0    60.8    678
+     0.788     0.760   -3.6    0.756   -4.0    46.7    520
+     6.670     7.221    8.3    7.266    8.9   472.0   1928
+    10.800    10.800    0.0   10.800    0.0   770.0   1974
+    11.545    11.449   -0.8   11.441   -0.9   825.0   1981
+     7.385     7.871    6.6    7.913    7.2   524.0   1945
+     8.260     8.470    2.5    8.487    2.8   573.0   1957
+    14.220    13.973   -1.7   13.927   -2.1  1030.0   1992
+     8.800     9.105    3.5    9.132    3.8   626.0   1958
+    12.390    12.250   -1.1   12.237   -1.2   892.0   1983
+    12.325    12.105   -1.8   12.086   -1.9   880.0   1983
+    13.400    13.146   -1.9   13.115   -2.1   965.0   1986
+    16.650    16.990    2.0   17.579    5.6  1244.0   2003
+     0.650     0.608   -6.4    0.604   -7.1    37.3    418
+     0.790     0.802    1.5    0.803    1.7    49.0    548
+     1.070     1.111    3.9    1.118    4.5    67.4    756
+     1.260     1.251   -0.7    1.250   -0.8    75.0    850
+     1.480     1.473   -0.5    1.472   -0.6    87.7    999
+     2.770     2.511   -9.4    2.495   -9.9   145.0   1535
+     2.900     2.692   -7.2    2.680   -7.6   156.0   1611
+     3.340     3.130   -6.3    3.118   -6.6   183.0   1693
+     3.530     3.353   -5.0    3.343   -5.3   197.0   1740
+     5.200     4.760   -8.5    4.740   -8.8   290.0   1893
+     5.420     4.962   -8.5    4.941   -8.8   304.0   1900
+     5.770     5.316   -7.9    5.295   -8.2   329.0   1912
+     5.980     5.526   -7.6    5.504   -8.0   344.0   1915
+     6.690     7.208    7.7    7.250    8.4   471.0   1890
+     7.270     7.748    6.6    7.788    7.1   514.0   1904
+     9.100     9.188    1.0    9.196    1.1   633.0   1938
+    11.440    11.318   -1.1   11.309   -1.1   814.0   1941
+    11.650    11.153   -4.3   11.116   -4.6   800.0   1954
+
+   Not validated by any measurement: the fade zone (amp RMS 1000-1400, about 1.5-2.1 A), because there are
+   no points between 1.48 A and 2.77 A. The amplified channel is verified linear at 1.48 A (999 counts) and
+   compressed at 2.77 A (1535 counts).
+
+Notes
+  - This analysis does not change the firmware; the section H model was copied into src/calibration.cpp separately.
+  - load_type is not recorded in the new CSV, so the cause of the 1-6.5 A discrepancy can't be examined here.
